@@ -1,0 +1,19 @@
+{
+  "name": "quicksilver_ball",
+  "version": "1.0.0",
+  "description": "Quicksilver Ball Project",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/mhintz/quicksilver_ball.git"
+  },
+  "author": "Mark Hintz <mark@interactivethings.com> (http://www.markhz.com)",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mhintz/quicksilver_ball/issues"
+  },
+  "homepage": "https://github.com/mhintz/quicksilver_ball#readme"
+}
