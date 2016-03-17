@@ -1,9 +1,11 @@
 import {vec3, mat4} from 'gl-matrix';
 import worldLightSHD from 'shaders/world_light.frag';
 import passThroughSHD from 'shaders/pass_through.vert';
-import {$, getWebGLContext, getPixelRatio, deg2Rad, elapsedTime, randRGBInt, flatten2Buffer, flatten2UIntBuffer} from 'util';
+import {$, getWebGLContext, getPixelRatio, deg2Rad, elapsedTime, randNum, randRGBInt, flatten2Buffer, flatten2UIntBuffer, flatten2IndexBuffer} from 'util';
+
 import icosphere from 'icosphere';
 import makeShader from 'gl-shader';
+import makeBuffer from 'gl-buffer';
 
 // Be forewarned: OpenGL LOVES global variables and state
 const gl = getWebGLContext(document.getElementById('maincanvas'));
@@ -23,53 +25,55 @@ function postProcessIcoMesh(complex) {
   let faceIndices = complex.cells;
 
   let expandedPositions = [];
-  let normals = [];
-  let colors = [];
+  let normals = vertices.map(() => vec3.create());
+  let colors = vertices.map(() => randRGBInt());
 
   faceIndices.forEach((face, idx) => {
-    let v0 = vec3.clone(vertices[face[0]]);
-    let v1 = vec3.clone(vertices[face[1]]);
-    let v2 = vec3.clone(vertices[face[2]]);
-    expandedPositions.push(v0, v1, v2);
+    let [i0, i1, i2] = face;
+
+    let v0 = vertices[i0];
+    let v1 = vertices[i1];
+    let v2 = vertices[i2];
 
     let side1 = vec3.sub(vec3.create(), v1, v0);
     let side2 = vec3.sub(vec3.create(), v2, v0);
-    let normal = vec3.cross(vec3.create(), side1, side2);
+    let faceNormal = vec3.cross(vec3.create(), side1, side2);
 
-    // normals.push(normal, normal, normal);
-    normals.push(v0, v1, v2);
+    let n1 = normals[i0];
+    let n2 = normals[i1];
+    let n3 = normals[i2];
 
-    let c0 = randRGBInt();
-    let c1 = randRGBInt();
-    let c2 = randRGBInt();
-    // Flat color shading, since all vertices have the same color
-    // c0 = c1 = c2;
-    colors.push(c0, c1, c2);
+    vec3.add(n1, n1, faceNormal);
+    vec3.add(n2, n2, faceNormal);
+    vec3.add(n3, n3, faceNormal);
   });
 
-  for (var idx = 0; idx < normals.length; ++idx) {
-    let nrml = normals[idx];
-    vec3.normalize(nrml, nrml);
-  }
+  normals.forEach((n) => vec3.normalize(n, n));
+
+  let offsets = normals.map((n) => vec3.scale(vec3.create(), n, randNum(-0.5, 0.5)));
 
   let numVertexElements = 3;
   let numNormalElements = 3;
   let numColorElements = 4;
 
-  let verticesData = flatten2Buffer(expandedPositions, numVertexElements);
-  let normalsData = flatten2Buffer(normals, numNormalElements);
-  let colorsData = flatten2UIntBuffer(colors, numColorElements);
+  let verticesData = flatten2Buffer(vertices, 3);
+  let normalsData = flatten2Buffer(normals, 3);
+  let colorsData = flatten2UIntBuffer(colors, 4);
+  let offsetData = flatten2Buffer(offsets, 3);
+  let meshIndexes = flatten2IndexBuffer(faceIndices, 3);
 
   return {
     // Mesh information
-    numVertices: expandedPositions.length,
+    numVertices: meshIndexes.length,
     modelPosition: vec3.create(),
     modelRotationMatrix: mat4.create(),
     modelScale: vec3.fromValues(1, 1, 1),
     // Buffers and buffer information
-    verticesBuffer: prepareGLBuffer(verticesData, gl.STATIC_DRAW),
-    normalsBuffer: prepareGLBuffer(normalsData, gl.STATIC_DRAW),
-    colorsBuffer: prepareGLBuffer(colorsData, gl.STATIC_DRAW),
+    verticesBuffer: makeBuffer(gl, verticesData),
+    normalsBuffer: makeBuffer(gl, normalsData),
+    colorsBuffer: makeBuffer(gl, colorsData),
+    offsetBuffer: makeBuffer(gl, offsetData),
+    meshIndexes: makeBuffer(gl, meshIndexes, gl.ELEMENT_ARRAY_BUFFER)
   };
 }
 
@@ -145,40 +149,45 @@ function draw() {
   modelMatrixIT = mat4.transpose(mat4.create(), mat4.invert(mat4.create(), modelMatrix));
   earthShader.uniforms.u_modelWorldMatrix_IT = modelMatrixIT;
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, theEarth.verticesBuffer);
+  theEarth.verticesBuffer.bind();
   earthShader.attributes.a_position.pointer();
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, theEarth.normalsBuffer);
+  theEarth.normalsBuffer.bind();
   earthShader.attributes.a_normal.pointer();
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, theEarth.colorsBuffer);
+  theEarth.colorsBuffer.bind();
   earthShader.attributes.a_color.pointer(gl.UNSIGNED_BYTE, true);
 
-  gl.drawArrays(gl.TRIANGLES, 0, theEarth.numVertices);
+  theEarth.offsetBuffer.bind();
+  earthShader.attributes.a_offset.pointer();
 
-  // Draw the Moon
-  moonShader.bind();
+  theEarth.meshIndexes.bind();
 
-  moonShader.uniforms.u_lightWorldPosition = lightPosition;
-  moonShader.uniforms.u_projectionMatrix = viewMatrices.projectionMatrix;
-  moonShader.uniforms.u_worldViewMatrix = viewMatrices.viewMatrix;
+  gl.drawElements(gl.TRIANGLES, theEarth.numVertices, gl.UNSIGNED_SHORT, 0);
 
-  modelMatrix = getModelMatrix(theMoon);
-  moonShader.uniforms.u_modelWorldMatrix = modelMatrix;
+  // // Draw the Moon
+  // moonShader.bind();
 
-  modelMatrixIT = mat4.transpose(mat4.create(), mat4.invert(mat4.create(), modelMatrix));
-  moonShader.uniforms.u_modelWorldMatrix_IT = modelMatrixIT;
+  // moonShader.uniforms.u_lightWorldPosition = lightPosition;
+  // moonShader.uniforms.u_projectionMatrix = viewMatrices.projectionMatrix;
+  // moonShader.uniforms.u_worldViewMatrix = viewMatrices.viewMatrix;
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, theMoon.verticesBuffer);
-  moonShader.attributes.a_position.pointer();
+  // modelMatrix = getModelMatrix(theMoon);
+  // moonShader.uniforms.u_modelWorldMatrix = modelMatrix;
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, theMoon.normalsBuffer);
-  moonShader.attributes.a_normal.pointer();
+  // modelMatrixIT = mat4.transpose(mat4.create(), mat4.invert(mat4.create(), modelMatrix));
+  // moonShader.uniforms.u_modelWorldMatrix_IT = modelMatrixIT;
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, theMoon.colorsBuffer);
-  moonShader.attributes.a_color.pointer(gl.UNSIGNED_BYTE, true);
+  // theMoon.verticesBuffer.bind();
+  // moonShader.attributes.a_position.pointer();
 
-  gl.drawArrays(gl.TRIANGLES, 0, theMoon.numVertices);
+  // theMoon.normalsBuffer.bind();
+  // moonShader.attributes.a_normal.pointer();
+
+  // theMoon.colorsBuffer.bind();
+  // moonShader.attributes.a_color.pointer(gl.UNSIGNED_BYTE, true);
+
+  // gl.drawArrays(gl.TRIANGLES, 0, theMoon.numVertices);
 }
 
 function prepareGLBuffer(bufferData, bufferUsage) {

@@ -44,3 +44,11 @@ export const flatten2UIntBuffer = (nestedArr, unitLength) => {
   });
   return buffer;
 };
+
+export const flatten2IndexBuffer = (nestedArr, unitLength) => {
+  let buffer = new Uint16Array(nestedArr.length * unitLength);
+  nestedArr.forEach((unit, idx) => {
+    buffer.set(unit, idx * unitLength);
+  });
+  return buffer;
+}
