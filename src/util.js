@@ -1,8 +1,13 @@
-'use strict';
+import SimplexNoise from 'simplex-noise';
+const simplex = new SimplexNoise();
+
+export const noise2 = (x, y) => simplex.noise2D(x, y);
+export const noise3 = (x, y, z) => simplex.noise3D(x, y, z);
+export const noise4 = (x, y, z, w) => simplex.noise4D(x, y, z, w);
 
 // Helper functions - Util
 export const $ = (id) => document.getElementById(id);
-let start = Date.now();
+const start = Date.now();
 export const elapsedTime = () => Date.now() - start;
 export const getPixelRatio = () => typeof window !== 'undefined' && 'devicePixelRatio' in window && window.devicePixelRatio > 1 ? window.devicePixelRatio : 1;
 export const getWebGLContext = (canvas) => canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -26,8 +31,13 @@ export const randNum = (lo, hi) => {
 export const randRGB = () => vec4.fromValues(Math.random(), Math.random(), Math.random(), 1);
 export const randRGBInt = () => [randNum(255), randNum(255), randNum(255), 255];
 
+export const flatten = (arr) => arr.reduce((flat, item) => {
+  // Recursively flattens inner contents to handle nested arrays of any dimension
+  return flat.concat(Object.prototype.toString.call(item[0]) === '[object Array]' ? flatten(item) : item);
+}, []);
+
 // Helper functions - Arrays / Buffers
-export const flatten2 = (nested2) => nested2.reduce((chain, item) => chain.concat(item));
+export const flatten2 = (nested2) => nested2.reduce((chain, item) => chain.concat(item), []);
 
 export const flatten2Buffer = (nestedArr, unitLength) => {
   let buffer = new Float32Array(nestedArr.length * unitLength);

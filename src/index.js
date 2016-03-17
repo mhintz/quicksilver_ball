@@ -1,7 +1,7 @@
 import {vec3, mat4} from 'gl-matrix';
 import worldLightSHD from 'shaders/world_light.frag';
 import passThroughSHD from 'shaders/pass_through.vert';
-import {$, getWebGLContext, getPixelRatio, deg2Rad, elapsedTime, randNum, randRGBInt, flatten2Buffer, flatten2UIntBuffer, flatten2IndexBuffer} from 'util';
+import {$, getWebGLContext, getPixelRatio, deg2Rad, elapsedTime, randNum, randRGBInt, flatten, flatten2Buffer, flatten2UIntBuffer, flatten2IndexBuffer, noise3} from 'util';
 
 import icosphere from 'icosphere';
 import makeShader from 'gl-shader';
@@ -14,11 +14,10 @@ const TWO_PI = 2 * Math.PI;
 
 const viewMatrices = {};
 
-const theEarth = postProcessIcoMesh(icosphere(3));
-const theMoon = postProcessIcoMesh(icosphere(0));
+const theEarth = postProcessIcoMesh(icosphere(4));
+const theEarthVBO = buildVboStruct(gl, theEarth);
 
 const earthShader = makeShader(gl, passThroughSHD, worldLightSHD);
-const moonShader = makeShader(gl, passThroughSHD, worldLightSHD);
 
 function postProcessIcoMesh(complex) {
   let vertices = complex.positions;
@@ -50,21 +49,22 @@ function postProcessIcoMesh(complex) {
 
   normals.forEach((n) => vec3.normalize(n, n));
 
-  let offsets = normals.map((n) => vec3.scale(vec3.create(), n, randNum(-0.5, 0.5)));
+  return {
+    vertices, normals, colors,
+    indices: faceIndices
+  };
+}
 
-  let numVertexElements = 3;
-  let numNormalElements = 3;
-  let numColorElements = 4;
+function buildVboStruct(gl, mesh) {
+  let verticesData = flatten2Buffer(mesh.vertices, 3);
+  let normalsData = flatten2Buffer(mesh.normals, 3);
+  let colorsData = flatten2UIntBuffer(mesh.colors, 4);
 
-  let verticesData = flatten2Buffer(vertices, 3);
-  let normalsData = flatten2Buffer(normals, 3);
-  let colorsData = flatten2UIntBuffer(colors, 4);
-  let offsetData = flatten2Buffer(offsets, 3);
-  let meshIndexes = flatten2IndexBuffer(faceIndices, 3);
+  let indices = flatten2IndexBuffer(mesh.indices, 3);
 
   return {
     // Mesh information
-    numVertices: meshIndexes.length,
+    numVertices: indices.length,
     modelPosition: vec3.create(),
     modelRotationMatrix: mat4.create(),
     modelScale: vec3.fromValues(1, 1, 1),
@@ -72,8 +72,7 @@ function postProcessIcoMesh(complex) {
     verticesBuffer: makeBuffer(gl, verticesData),
     normalsBuffer: makeBuffer(gl, normalsData),
     colorsBuffer: makeBuffer(gl, colorsData),
-    offsetBuffer: makeBuffer(gl, offsetData),
-    meshIndexes: makeBuffer(gl, meshIndexes, gl.ELEMENT_ARRAY_BUFFER)
+    meshIndexes: makeBuffer(gl, indices, gl.ELEMENT_ARRAY_BUFFER)
   };
 }
 
@@ -83,6 +82,12 @@ function getModelMatrix(modelMesh) {
   mat4.multiply(combinedMatrix, combinedMatrix, modelMesh.modelRotationMatrix);
   mat4.scale(combinedMatrix, combinedMatrix, modelMesh.modelScale);
   return combinedMatrix;
+}
+
+function getOffsets(mesh, offsetX) {
+  return mesh.vertices.map((v, idx) => {
+    return vec3.scale(vec3.create(), mesh.normals[idx], noise3(3.2 * (v[0] + offsetX), 3.2 * v[1], 3.2 * v[2]) * 0.09);
+  });
 }
 
 function setup() {
@@ -104,35 +109,24 @@ function setup() {
   gl.frontFace(gl.CCW);
 
   viewMatrices.projectionMatrix = mat4.perspective(mat4.create(), deg2Rad(25), canvasWidth / canvasHeight, 0.01, 50);
-  viewMatrices.cameraPosition = vec3.fromValues(0, 0, 9);
+  viewMatrices.cameraPosition = vec3.fromValues(0, 0, 6);
   viewMatrices.cameraTarget = vec3.fromValues(0, 0, 0);
   viewMatrices.cameraUp = vec3.fromValues(0, 1, 0);
   viewMatrices.viewMatrix = mat4.lookAt(mat4.create(), viewMatrices.cameraPosition, viewMatrices.cameraTarget, viewMatrices.cameraUp);
 
-  theMoon.modelScale = vec3.fromValues(0.2, 0.2, 0.2);
+  viewMatrices.noiseOffset = 0.0;
 }
 
 function draw() {
   // Animation
-  theMoon.modelPosition[0] = 3 * Math.cos(0.001 * elapsedTime());
-  theMoon.modelPosition[2] = 3 * Math.sin(0.001 * elapsedTime());
-  mat4.rotateY(theMoon.modelRotationMatrix, theMoon.modelRotationMatrix, 0.006 * PI);
-  mat4.rotateY(theEarth.modelRotationMatrix, theEarth.modelRotationMatrix, -0.003 * PI);
+  mat4.rotateY(theEarthVBO.modelRotationMatrix, theEarthVBO.modelRotationMatrix, -0.003 * PI);
+  viewMatrices.noiseOffset += 0.003;
+
+  let offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
+  let offsetBuf = makeBuffer(gl, flatten2Buffer(offsets, 3));
 
   // Drawing
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-  // Misc variables used below
-  let lightPosLoc;
-  let projMatLoc;
-  let viewMatLoc;
-  let modelMatrix;
-  let modelMatLoc;
-  let modelMatrixIT;
-  let modelMatITLoc;
-  let posLoc;
-  let normLoc;
-  let colorLoc;
 
   let lightPosition = vec3.add(vec3.create(), viewMatrices.cameraPosition, vec3.fromValues(4, 10, 4));
 
@@ -140,54 +134,31 @@ function draw() {
   earthShader.bind();
 
   earthShader.uniforms.u_lightWorldPosition = lightPosition;
+  // earthShader.uniforms.u_lightWorldPosition = viewMatrices.cameraPosition;
   earthShader.uniforms.u_projectionMatrix = viewMatrices.projectionMatrix;
   earthShader.uniforms.u_worldViewMatrix = viewMatrices.viewMatrix;
 
-  modelMatrix = getModelMatrix(theEarth);
+  let modelMatrix = getModelMatrix(theEarthVBO);
   earthShader.uniforms.u_modelWorldMatrix = modelMatrix;
 
-  modelMatrixIT = mat4.transpose(mat4.create(), mat4.invert(mat4.create(), modelMatrix));
+  let modelMatrixIT = mat4.transpose(mat4.create(), mat4.invert(mat4.create(), modelMatrix));
   earthShader.uniforms.u_modelWorldMatrix_IT = modelMatrixIT;
 
-  theEarth.verticesBuffer.bind();
+  theEarthVBO.verticesBuffer.bind();
   earthShader.attributes.a_position.pointer();
 
-  theEarth.normalsBuffer.bind();
+  theEarthVBO.normalsBuffer.bind();
   earthShader.attributes.a_normal.pointer();
 
-  theEarth.colorsBuffer.bind();
+  theEarthVBO.colorsBuffer.bind();
   earthShader.attributes.a_color.pointer(gl.UNSIGNED_BYTE, true);
 
-  theEarth.offsetBuffer.bind();
+  offsetBuf.bind();
   earthShader.attributes.a_offset.pointer();
 
-  theEarth.meshIndexes.bind();
+  theEarthVBO.meshIndexes.bind();
 
-  gl.drawElements(gl.TRIANGLES, theEarth.numVertices, gl.UNSIGNED_SHORT, 0);
-
-  // // Draw the Moon
-  // moonShader.bind();
-
-  // moonShader.uniforms.u_lightWorldPosition = lightPosition;
-  // moonShader.uniforms.u_projectionMatrix = viewMatrices.projectionMatrix;
-  // moonShader.uniforms.u_worldViewMatrix = viewMatrices.viewMatrix;
-
-  // modelMatrix = getModelMatrix(theMoon);
-  // moonShader.uniforms.u_modelWorldMatrix = modelMatrix;
-
-  // modelMatrixIT = mat4.transpose(mat4.create(), mat4.invert(mat4.create(), modelMatrix));
-  // moonShader.uniforms.u_modelWorldMatrix_IT = modelMatrixIT;
-
-  // theMoon.verticesBuffer.bind();
-  // moonShader.attributes.a_position.pointer();
-
-  // theMoon.normalsBuffer.bind();
-  // moonShader.attributes.a_normal.pointer();
-
-  // theMoon.colorsBuffer.bind();
-  // moonShader.attributes.a_color.pointer(gl.UNSIGNED_BYTE, true);
-
-  // gl.drawArrays(gl.TRIANGLES, 0, theMoon.numVertices);
+  gl.drawElements(gl.TRIANGLES, theEarthVBO.numVertices, gl.UNSIGNED_SHORT, 0);
 }
 
 function prepareGLBuffer(bufferData, bufferUsage) {
