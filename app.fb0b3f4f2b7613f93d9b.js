@@ -91,7 +91,6 @@
 	var canvas = document.getElementById('maincanvas');
 	var gl = (0, _util.getWebGLContext)(canvas);
 	var ext = gl.getExtension("OES_standard_derivatives");
-	console.log(ext);
 	var PI = Math.PI;
 	var TWO_PI = 2 * Math.PI;
 
@@ -146,11 +145,14 @@
 	  canvas.addEventListener('mousedown', function (e) {
 	    return _this.down(e.pageX, e.pageY);
 	  });
+	  canvas.addEventListener('mousemove', function (e) {
+	    return _this.move(e.pageX, e.pageY);
+	  });
 	  canvas.addEventListener('mouseup', function (e) {
 	    return _this.up(e.pageX, e.pageY);
 	  });
-	  canvas.addEventListener('mousemove', function (e) {
-	    return _this.move(e.pageX, e.pageY);
+	  canvas.addEventListener('mouseout', function (e) {
+	    return _this.up(e.pageX, e.pageY);
 	  });
 	  canvas.addEventListener('touchstart', function (e) {
 	    var _e$touches$ = e.touches[0];
@@ -159,19 +161,19 @@
 
 	    _this.down(pageX, pageY);
 	  });
-	  canvas.addEventListener('touchend', function (e) {
+	  canvas.addEventListener('touchmove', function (e) {
 	    var _e$touches$2 = e.touches[0];
 	    var pageX = _e$touches$2.pageX;
 	    var pageY = _e$touches$2.pageY;
 
-	    _this.up(pageX, pageY);
+	    _this.move(pageX, pageY);
 	  });
-	  canvas.addEventListener('touchmove', function (e) {
+	  canvas.addEventListener('touchend', function (e) {
 	    var _e$touches$3 = e.touches[0];
 	    var pageX = _e$touches$3.pageX;
 	    var pageY = _e$touches$3.pageY;
 
-	    _this.move(pageX, pageY);
+	    _this.up(pageX, pageY);
 	  });
 	}(canvas);
 
@@ -189,7 +191,7 @@
 	  movement = _glMatrix.vec3.mul(movement, movement, _glMatrix.vec3.fromValues(1, -1, 0));
 	  applyOffset(_glMatrix.vec3.scale(movement, movement, 0.3));
 
-	  var angle = _glMatrix.vec3.length(movement);
+	  var angle = _glMatrix.vec3.length(movement) * 0.1;
 	  // Flip the movement vector perpendicular
 	  var rotationaxis = _glMatrix.vec3.fromValues(movement[1], -movement[0], 0);
 	  applyRotationForce(angle, rotationaxis);
@@ -208,7 +210,8 @@
 	  spring: 0.3,
 	  damping: 0.5,
 	  friction: 0.9,
-	  angularVelocity: _glMatrix.vec3.create()
+	  angularVelocity: _glMatrix.vec3.create(),
+	  angularFriction: 0.97
 	};
 
 	var theEarth = postProcessIcoMesh((0, _icosphere2.default)(5));
@@ -347,12 +350,36 @@
 	  _glMatrix.vec3.add(modelNode.position, modelNode.position, offsetVec);
 	}
 
-	function applyRotationForce(angle, rotAxis) {}
+	function angularVelToQuat(avel) {
+	  var rot_q = _glMatrix.quat.create();
+	  var angle = _glMatrix.vec3.length(avel);
+	  var norm = _glMatrix.vec3.normalize(_glMatrix.vec3.create(), avel);
+	  var sinHalfAngle = Math.sin(angle / 2);
+	  var x = norm[0] * sinHalfAngle;
+	  var y = norm[1] * sinHalfAngle;
+	  var z = norm[2] * sinHalfAngle;
+	  var w = Math.cos(angle / 2);
+	  rot_q = _glMatrix.quat.fromValues(x, y, z, w);
+	  return _glMatrix.quat.normalize(rot_q, rot_q);
+	}
+
+	function applyRotationForce(angle, rotAxis) {
+	  var r_axis = _glMatrix.vec3.normalize(_glMatrix.vec3.create(), rotAxis);
+	  var angularPush = _glMatrix.vec3.scale(r_axis, r_axis, -angle);
+	  _glMatrix.vec3.add(modelNode.angularVelocity, modelNode.angularVelocity, angularPush);
+	}
 
 	function draw() {
 	  // Animation
-	  _glMatrix.mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
 	  viewMatrices.noiseOffset += 0.003;
+
+	  _glMatrix.mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
+
+	  var angularQuat = angularVelToQuat(modelNode.angularVelocity);
+	  var angularMat = _glMatrix.mat4.fromQuat(_glMatrix.mat4.create(), angularQuat);
+	  _glMatrix.mat4.multiply(modelNode.rotation, modelNode.rotation, angularMat);
+
+	  _glMatrix.vec3.scale(modelNode.angularVelocity, modelNode.angularVelocity, modelNode.angularFriction);
 
 	  var origin = _glMatrix.vec3.fromValues(0, 0, 0);
 	  var toOrigin = _glMatrix.vec3.sub(_glMatrix.vec3.create(), origin, modelNode.position);
@@ -365,8 +392,9 @@
 
 	  _glMatrix.vec3.add(modelNode.velocity, modelNode.velocity, modelNode.acceleration);
 	  _glMatrix.vec3.add(modelNode.position, modelNode.position, modelNode.velocity);
-	  _glMatrix.vec3.scale(modelNode.position, modelNode.position, modelNode.friction);
-	  _glMatrix.vec3.scale(modelNode.acceleration, modelNode.acceleration, 0);
+
+	  _glMatrix.vec3.scale(modelNode.acceleration, modelNode.acceleration, 0.01);
+	  _glMatrix.vec3.scale(modelNode.velocity, modelNode.velocity, modelNode.friction);
 
 	  var offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
 	  var offsetBuf = (0, _glBuffer2.default)(gl, (0, _util.flatten2Buffer)(offsets, 3));
