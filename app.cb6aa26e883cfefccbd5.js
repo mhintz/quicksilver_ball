@@ -94,6 +94,35 @@
 	var PI = Math.PI;
 	var TWO_PI = 2 * Math.PI;
 
+	// const offsetDistance = 2.8;
+	// const offsetStrength = 0.16;
+
+	// const offsetDistance = 1.4;
+	// const offsetStrength = 0.28;
+
+	var offsetDistance = 1.6;
+	var offsetStrength = 0.19;
+
+	var viewMatrices = {};
+	var modelNode = {
+	  position: _glMatrix.vec3.create(),
+	  rotation: _glMatrix.mat4.create(),
+	  scale: _glMatrix.vec3.fromValues(1, 1, 1),
+	  velocity: _glMatrix.vec3.create(),
+	  acceleration: _glMatrix.vec3.create(),
+	  mass: 20,
+	  spring: 0.3,
+	  damping: 0.5,
+	  friction: 0.9,
+	  angularVelocity: _glMatrix.vec3.create(),
+	  angularFriction: 0.97
+	};
+
+	var theEarth = postProcessIcoMesh((0, _icosphere2.default)(5));
+	var theEarthVBO = buildVboStruct(gl, theEarth);
+
+	var earthShader = (0, _glShader2.default)(gl, _pass_through2.default, _world_light2.default);
+
 	var state = new function State(canvas) {
 	  var _this = this;
 
@@ -177,47 +206,34 @@
 	  });
 	}(canvas);
 
+	function getMovementRelToCenter(x, y) {
+	  x /= window.innerWidth;y /= window.innerHeight;
+	  var center = _glMatrix.vec3.fromValues(0.5, 0.5, 0);
+	  var movement = _glMatrix.vec3.sub(_glMatrix.vec3.create(), _glMatrix.vec3.fromValues(x, y, 0), center);
+	  return movement;
+	}
+
 	state.listen('tap', function (x, y) {
 	  var force = _glMatrix.vec3.sub(_glMatrix.vec3.create(), viewMatrices.cameraTarget, viewMatrices.cameraPosition);
+	  _glMatrix.vec3.add(force, force, _glMatrix.vec3.fromValues((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, Math.random()));
 	  _glMatrix.vec3.normalize(force, force);
-	  _glMatrix.vec3.scale(force, force, 20);
+	  _glMatrix.vec3.scale(force, force, 28);
 	  applyForce(force);
 	});
 
 	state.listen('move', function (x, y) {
-	  x /= window.innerWidth;y /= window.innerHeight;
-	  var center = _glMatrix.vec3.fromValues(0.5, 0.5, 0);
-	  var movement = _glMatrix.vec3.sub(_glMatrix.vec3.create(), _glMatrix.vec3.fromValues(x, y, 0), center);
+	  var movement = getMovementRelToCenter(x, y);
 	  movement = _glMatrix.vec3.mul(movement, movement, _glMatrix.vec3.fromValues(1, -1, 0));
 	  applyOffset(_glMatrix.vec3.scale(movement, movement, 0.3));
+	});
 
-	  var angle = _glMatrix.vec3.length(movement) * 0.1;
+	state.listen('up', function (x, y) {
+	  var movement = getMovementRelToCenter(x, y);
+	  var angle = _glMatrix.vec3.length(movement) * 0.24;
 	  // Flip the movement vector perpendicular
 	  var rotationaxis = _glMatrix.vec3.fromValues(movement[1], -movement[0], 0);
 	  applyRotationForce(angle, rotationaxis);
 	});
-
-	state.listen('up', function (x, y) {});
-
-	var viewMatrices = {};
-	var modelNode = {
-	  position: _glMatrix.vec3.create(),
-	  rotation: _glMatrix.mat4.create(),
-	  scale: _glMatrix.vec3.fromValues(1, 1, 1),
-	  velocity: _glMatrix.vec3.create(),
-	  acceleration: _glMatrix.vec3.create(),
-	  mass: 20,
-	  spring: 0.3,
-	  damping: 0.5,
-	  friction: 0.9,
-	  angularVelocity: _glMatrix.vec3.create(),
-	  angularFriction: 0.97
-	};
-
-	var theEarth = postProcessIcoMesh((0, _icosphere2.default)(5));
-	var theEarthVBO = buildVboStruct(gl, theEarth);
-
-	var earthShader = (0, _glShader2.default)(gl, _pass_through2.default, _world_light2.default);
 
 	function postProcessIcoMesh(complex) {
 	  var vertices = complex.positions;
@@ -292,11 +308,9 @@
 	  return combinedMatrix;
 	}
 
-	function getOffsets(mesh, offsetX) {
-	  var offsetDistance = 2.8;
-	  var offsetStrength = 0.16;
+	function getOffsets(mesh, offsetX, distance, strength) {
 	  return mesh.vertices.map(function (v, idx) {
-	    return _glMatrix.vec3.scale(_glMatrix.vec3.create(), mesh.normals[idx], (0, _util.noise3)(offsetDistance * (v[0] + offsetX), offsetDistance * v[1], offsetDistance * v[2]) * offsetStrength);
+	    return _glMatrix.vec3.scale(_glMatrix.vec3.create(), mesh.normals[idx], (0, _util.noise3)(distance * (v[0] + offsetX), distance * v[1], distance * v[2]) * strength);
 	  });
 	}
 
@@ -332,6 +346,7 @@
 	  viewMatrices.viewMatrix = _glMatrix.mat4.lookAt(_glMatrix.mat4.create(), viewMatrices.cameraPosition, viewMatrices.cameraTarget, viewMatrices.cameraUp);
 
 	  viewMatrices.noiseOffset = 0.0;
+	  viewMatrices.lightAngle = _glMatrix.vec3.fromValues(0.1 * PI, 0.2 * PI, 0.3 * PI);
 	}
 
 	function applyForce(forceVec) {
@@ -371,7 +386,9 @@
 
 	function draw() {
 	  // Animation
+	  _glMatrix.vec3.add(viewMatrices.lightAngle, viewMatrices.lightAngle, _glMatrix.vec3.fromValues(0.01 * PI, Math.random() * 0.01 * PI, 0.01 * PI));
 	  viewMatrices.noiseOffset += 0.003;
+	  var modOffsetDistance = offsetDistance + Math.sin((0, _util.elapsedTime)() / 1000) * 0.08;
 
 	  _glMatrix.mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
 
@@ -396,13 +413,16 @@
 	  _glMatrix.vec3.scale(modelNode.acceleration, modelNode.acceleration, 0.01);
 	  _glMatrix.vec3.scale(modelNode.velocity, modelNode.velocity, modelNode.friction);
 
-	  var offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
+	  var offsets = getOffsets(theEarth, viewMatrices.noiseOffset, modOffsetDistance, offsetStrength);
 	  var offsetBuf = (0, _glBuffer2.default)(gl, (0, _util.flatten2Buffer)(offsets, 3));
 
 	  // Drawing
 	  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-	  var lightPosition = _glMatrix.vec3.add(_glMatrix.vec3.create(), viewMatrices.cameraPosition, _glMatrix.vec3.fromValues(4, 10, 4));
+	  // let lightPosition = vec3.add(vec3.create(), viewMatrices.cameraPosition, vec3.fromValues(4, 10, 4));
+	  // let lightPosition = vec3.fromValues(4, 10, 4);
+	  var l_a = viewMatrices.lightAngle;
+	  var lightPosition = _glMatrix.vec3.fromValues(Math.cos(l_a[0]) * 4, Math.cos(l_a[1]) * 4, Math.abs(Math.cos(l_a[2]) * 4) - 0.2);
 
 	  // Draw the Earth
 	  earthShader.bind();
@@ -1789,7 +1809,7 @@
   \**************************************/
 /***/ function(module, exports) {
 
-	module.exports = "#extension GL_OES_standard_derivatives : enable\n\nprecision highp float;\n#define GLSLIFY 1\n\nuniform vec3 u_lightWorldPosition;\n\nvarying vec3 v_position;\nvarying vec4 v_camera_position;\nvarying vec3 v_normal;\nvarying vec3 v_world_normal;\nvarying vec3 v_screen_normal;\nvarying vec4 v_color;\n\nstruct Material {\n  vec3 amb;\n  vec3 diff;\n  vec3 spec;\n  float shine;\n};\n\nvoid main() {\n  const Material silver = Material(vec3(0.19225, 0.19225, 0.19225), vec3(0.50754, 0.50754, 0.50754), vec3(0.508273, 0.508273, 0.508273), 0.4 * 1000.0);\n\n  vec3 xvec = dFdx(v_position);\n  vec3 yvec = dFdy(v_position);\n  vec3 face_normal = normalize(cross(xvec, yvec));\n  vec3 base_normal = normalize(v_world_normal);\n  vec3 n_normal = mix(base_normal, face_normal, 0.65);\n\n  vec3 to_light = normalize(u_lightWorldPosition - v_position);\n  vec3 to_cam = normalize(- v_camera_position.xyz);\n\n  float ambient_value = 1.0;\n  float diffuse_value = max(dot(to_light, n_normal), 0.0);\n  float diffuse_dropoff = pow(diffuse_value, 2.0);\n  float spec_highlight = pow(max(dot(normalize(mix(to_light, to_cam, 0.5)), n_normal), 0.0), silver.shine);\n  // gl_FragColor = vec4(clamp(v_world_normal, 0.1, 1.0), 1.0);\n  // gl_FragColor = v_color * vec4(v_world_normal, 1);\n  // gl_FragColor = vec4(v_position, 1.0);\n  // gl_FragColor = vec4(v_world_normal, 1.0);\n  float light_facing = dot(to_light, n_normal);\n  float chroma_clamp = 0.0;\n  if (light_facing > -0.3 && light_facing < -0.05) { chroma_clamp = 1.0; }\n  if (light_facing > 0.9 && light_facing < 0.95) { chroma_clamp = 1.0; }\n  float chroma_value = pow(1.0 - diffuse_value, 2.0);\n  vec3 chroma = abs(v_normal) * 0.20 * chroma_clamp;\n\n  float alpha = v_color.a;\n  vec3 combined_color = silver.amb * ambient_value + silver.diff * diffuse_dropoff + silver.spec * spec_highlight + chroma;\n  gl_FragColor = vec4(combined_color, alpha);\n}\n"
+	module.exports = "#extension GL_OES_standard_derivatives : enable\n\nprecision highp float;\n#define GLSLIFY 1\n\n//\n// Description : Array and textureless GLSL 2D/3D/4D simplex\n//               noise functions.\n//      Author : Ian McEwan, Ashima Arts.\n//  Maintainer : ijm\n//     Lastmod : 20110822 (ijm)\n//     License : Copyright (C) 2011 Ashima Arts. All rights reserved.\n//               Distributed under the MIT License. See LICENSE file.\n//               https://github.com/ashima/webgl-noise\n//\n\nvec3 mod289_1_0(vec3 x) {\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 mod289_1_0(vec4 x) {\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 permute_1_1(vec4 x) {\n     return mod289_1_0(((x*34.0)+1.0)*x);\n}\n\nvec4 taylorInvSqrt_1_2(vec4 r)\n{\n  return 1.79284291400159 - 0.85373472095314 * r;\n}\n\nfloat snoise_1_3(vec3 v)\n  {\n  const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;\n  const vec4  D_1_4 = vec4(0.0, 0.5, 1.0, 2.0);\n\n// First corner\n  vec3 i  = floor(v + dot(v, C.yyy) );\n  vec3 x0 =   v - i + dot(i, C.xxx) ;\n\n// Other corners\n  vec3 g_1_5 = step(x0.yzx, x0.xyz);\n  vec3 l = 1.0 - g_1_5;\n  vec3 i1 = min( g_1_5.xyz, l.zxy );\n  vec3 i2 = max( g_1_5.xyz, l.zxy );\n\n  //   x0 = x0 - 0.0 + 0.0 * C.xxx;\n  //   x1 = x0 - i1  + 1.0 * C.xxx;\n  //   x2 = x0 - i2  + 2.0 * C.xxx;\n  //   x3 = x0 - 1.0 + 3.0 * C.xxx;\n  vec3 x1 = x0 - i1 + C.xxx;\n  vec3 x2 = x0 - i2 + C.yyy; // 2.0*C.x = 1/3 = C.y\n  vec3 x3 = x0 - D_1_4.yyy;      // -1.0+3.0*C.x = -0.5 = -D.y\n\n// Permutations\n  i = mod289_1_0(i);\n  vec4 p = permute_1_1( permute_1_1( permute_1_1(\n             i.z + vec4(0.0, i1.z, i2.z, 1.0 ))\n           + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))\n           + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));\n\n// Gradients: 7x7 points over a square, mapped onto an octahedron.\n// The ring size 17*17 = 289 is close to a multiple of 49 (49*6 = 294)\n  float n_ = 0.142857142857; // 1.0/7.0\n  vec3  ns = n_ * D_1_4.wyz - D_1_4.xzx;\n\n  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);  //  mod(p,7*7)\n\n  vec4 x_ = floor(j * ns.z);\n  vec4 y_ = floor(j - 7.0 * x_ );    // mod(j,N)\n\n  vec4 x = x_ *ns.x + ns.yyyy;\n  vec4 y = y_ *ns.x + ns.yyyy;\n  vec4 h = 1.0 - abs(x) - abs(y);\n\n  vec4 b0 = vec4( x.xy, y.xy );\n  vec4 b1 = vec4( x.zw, y.zw );\n\n  //vec4 s0 = vec4(lessThan(b0,0.0))*2.0 - 1.0;\n  //vec4 s1 = vec4(lessThan(b1,0.0))*2.0 - 1.0;\n  vec4 s0 = floor(b0)*2.0 + 1.0;\n  vec4 s1 = floor(b1)*2.0 + 1.0;\n  vec4 sh = -step(h, vec4(0.0));\n\n  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;\n  vec4 a1_1_6 = b1.xzyw + s1.xzyw*sh.zzww ;\n\n  vec3 p0_1_7 = vec3(a0.xy,h.x);\n  vec3 p1 = vec3(a0.zw,h.y);\n  vec3 p2 = vec3(a1_1_6.xy,h.z);\n  vec3 p3 = vec3(a1_1_6.zw,h.w);\n\n//Normalise gradients\n  vec4 norm = taylorInvSqrt_1_2(vec4(dot(p0_1_7,p0_1_7), dot(p1,p1), dot(p2, p2), dot(p3,p3)));\n  p0_1_7 *= norm.x;\n  p1 *= norm.y;\n  p2 *= norm.z;\n  p3 *= norm.w;\n\n// Mix final noise value\n  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);\n  m = m * m;\n  return 42.0 * dot( m*m, vec4( dot(p0_1_7,x0), dot(p1,x1),\n                                dot(p2,x2), dot(p3,x3) ) );\n  }\n\n\n\n//\n// GLSL textureless classic 3D noise \"cnoise\",\n// with an RSL-style periodic variant \"pnoise\".\n// Author:  Stefan Gustavson (stefan.gustavson@liu.se)\n// Version: 2011-10-11\n//\n// Many thanks to Ian McEwan of Ashima Arts for the\n// ideas for permutation and gradient selection.\n//\n// Copyright (c) 2011 Stefan Gustavson. All rights reserved.\n// Distributed under the MIT license. See LICENSE file.\n// https://github.com/ashima/webgl-noise\n//\n\nvec3 mod289_2_8(vec3 x)\n{\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 mod289_2_8(vec4 x)\n{\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 permute_2_9(vec4 x)\n{\n  return mod289_2_8(((x*34.0)+1.0)*x);\n}\n\nvec4 taylorInvSqrt_2_10(vec4 r)\n{\n  return 1.79284291400159 - 0.85373472095314 * r;\n}\n\nvec3 fade_2_11(vec3 t) {\n  return t*t*t*(t*(t*6.0-15.0)+10.0);\n}\n\n// Classic Perlin noise\nfloat cnoise_2_12(vec3 P)\n{\n  vec3 Pi0 = floor(P); // Integer part for indexing\n  vec3 Pi1 = Pi0 + vec3(1.0); // Integer part + 1\n  Pi0 = mod289_2_8(Pi0);\n  Pi1 = mod289_2_8(Pi1);\n  vec3 Pf0 = fract(P); // Fractional part for interpolation\n  vec3 Pf1 = Pf0 - vec3(1.0); // Fractional part - 1.0\n  vec4 ix = vec4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);\n  vec4 iy = vec4(Pi0.yy, Pi1.yy);\n  vec4 iz0 = Pi0.zzzz;\n  vec4 iz1 = Pi1.zzzz;\n\n  vec4 ixy = permute_2_9(permute_2_9(ix) + iy);\n  vec4 ixy0 = permute_2_9(ixy + iz0);\n  vec4 ixy1 = permute_2_9(ixy + iz1);\n\n  vec4 gx0 = ixy0 * (1.0 / 7.0);\n  vec4 gy0 = fract(floor(gx0) * (1.0 / 7.0)) - 0.5;\n  gx0 = fract(gx0);\n  vec4 gz0 = vec4(0.5) - abs(gx0) - abs(gy0);\n  vec4 sz0 = step(gz0, vec4(0.0));\n  gx0 -= sz0 * (step(0.0, gx0) - 0.5);\n  gy0 -= sz0 * (step(0.0, gy0) - 0.5);\n\n  vec4 gx1 = ixy1 * (1.0 / 7.0);\n  vec4 gy1 = fract(floor(gx1) * (1.0 / 7.0)) - 0.5;\n  gx1 = fract(gx1);\n  vec4 gz1 = vec4(0.5) - abs(gx1) - abs(gy1);\n  vec4 sz1 = step(gz1, vec4(0.0));\n  gx1 -= sz1 * (step(0.0, gx1) - 0.5);\n  gy1 -= sz1 * (step(0.0, gy1) - 0.5);\n\n  vec3 g000 = vec3(gx0.x,gy0.x,gz0.x);\n  vec3 g100 = vec3(gx0.y,gy0.y,gz0.y);\n  vec3 g010 = vec3(gx0.z,gy0.z,gz0.z);\n  vec3 g110 = vec3(gx0.w,gy0.w,gz0.w);\n  vec3 g001 = vec3(gx1.x,gy1.x,gz1.x);\n  vec3 g101 = vec3(gx1.y,gy1.y,gz1.y);\n  vec3 g011 = vec3(gx1.z,gy1.z,gz1.z);\n  vec3 g111 = vec3(gx1.w,gy1.w,gz1.w);\n\n  vec4 norm0 = taylorInvSqrt_2_10(vec4(dot(g000, g000), dot(g010, g010), dot(g100, g100), dot(g110, g110)));\n  g000 *= norm0.x;\n  g010 *= norm0.y;\n  g100 *= norm0.z;\n  g110 *= norm0.w;\n  vec4 norm1 = taylorInvSqrt_2_10(vec4(dot(g001, g001), dot(g011, g011), dot(g101, g101), dot(g111, g111)));\n  g001 *= norm1.x;\n  g011 *= norm1.y;\n  g101 *= norm1.z;\n  g111 *= norm1.w;\n\n  float n000 = dot(g000, Pf0);\n  float n100 = dot(g100, vec3(Pf1.x, Pf0.yz));\n  float n010 = dot(g010, vec3(Pf0.x, Pf1.y, Pf0.z));\n  float n110 = dot(g110, vec3(Pf1.xy, Pf0.z));\n  float n001 = dot(g001, vec3(Pf0.xy, Pf1.z));\n  float n101 = dot(g101, vec3(Pf1.x, Pf0.y, Pf1.z));\n  float n011 = dot(g011, vec3(Pf0.x, Pf1.yz));\n  float n111 = dot(g111, Pf1);\n\n  vec3 fade_xyz = fade_2_11(Pf0);\n  vec4 n_z = mix(vec4(n000, n100, n010, n110), vec4(n001, n101, n011, n111), fade_xyz.z);\n  vec2 n_yz = mix(n_z.xy, n_z.zw, fade_xyz.y);\n  float n_xyz = mix(n_yz.x, n_yz.y, fade_xyz.x);\n  return 2.2 * n_xyz;\n}\n\n\n\n\nuniform vec3 u_lightWorldPosition;\n\nvarying vec3 v_position;\nvarying vec4 v_camera_position;\nvarying vec3 v_normal;\nvarying vec3 v_world_normal;\nvarying vec3 v_screen_normal;\nvarying vec4 v_color;\n\nstruct Material {\n  vec3 amb;\n  vec3 diff;\n  vec3 spec;\n  float shine;\n};\n\nvec3 noisyvec(in vec3 sampl) {\n  return (vec3(snoise_1_3(sampl), snoise_1_3(sampl + 1000.0), snoise_1_3(sampl + 10000.0)) + 1.0) / 2.0;\n}\n\nvoid main() {\n  const Material silver = Material(vec3(0.19225, 0.19225, 0.19225), vec3(0.50754, 0.50754, 0.50754), vec3(0.508273, 0.508273, 0.508273), 0.4 * 128.0);\n\n  vec3 xvec = dFdx(v_position);\n  vec3 yvec = dFdy(v_position);\n  vec3 face_normal = normalize(cross(xvec, yvec));\n  vec3 base_normal = normalize(v_world_normal);\n  vec3 n_normal = mix(base_normal, face_normal, 0.65);\n\n  vec3 to_light = normalize(u_lightWorldPosition - v_position);\n  vec3 to_cam = normalize(- v_camera_position.xyz);\n\n  float ambient_value = 1.0;\n  float diffuse_value = max(dot(to_light, n_normal), 0.0);\n  float diffuse_dropoff = pow(diffuse_value, 2.0);\n  float spec_highlight = pow(max(dot(normalize(mix(to_light, to_cam, 0.5)), n_normal), 0.0), silver.shine);\n\n  float light_facing = dot(to_light, n_normal);\n  float chroma_clamp = 0.0;\n  if (light_facing > -0.3 && light_facing < -0.05) { chroma_clamp = 1.0; }\n  if (light_facing > 0.9 && light_facing < 0.95) { chroma_clamp = 1.0; }\n  float chroma_value = pow(1.0 - diffuse_value, 2.0);\n  vec3 chroma = abs(v_normal) * chroma_clamp * vec3(0.15, 0.4, 0.55) * 0.8;\n\n  float noise_clamp = 0.0;\n  if (light_facing > -0.85 && light_facing < -0.7) { noise_clamp = 1.0; }\n  vec3 noisey_color = noisyvec(cos(n_normal) * sin(v_position)) * vec3(0.25, 0.68, 0.75) * 0.4 * noise_clamp;\n\n  float alpha = v_color.a;\n\n  vec3 combined_color = silver.amb * ambient_value + silver.diff * diffuse_dropoff + silver.spec * spec_highlight + chroma + noisey_color;\n  gl_FragColor = vec4(combined_color, alpha);\n}\n"
 
 /***/ },
 /* 4 */
