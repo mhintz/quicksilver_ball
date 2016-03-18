@@ -14,6 +14,35 @@ let ext = gl.getExtension("OES_standard_derivatives");
 const PI = Math.PI;
 const TWO_PI = 2 * Math.PI;
 
+// const offsetDistance = 2.8;
+// const offsetStrength = 0.16;
+
+// const offsetDistance = 1.4;
+// const offsetStrength = 0.28;
+
+let offsetDistance = 1.6;
+let offsetStrength = 0.19;
+
+const viewMatrices = {};
+const modelNode = {
+  position: vec3.create(),
+  rotation: mat4.create(),
+  scale: vec3.fromValues(1, 1, 1),
+  velocity: vec3.create(),
+  acceleration: vec3.create(),
+  mass: 20,
+  spring: 0.3,
+  damping: 0.5,
+  friction: 0.9,
+  angularVelocity: vec3.create(),
+  angularFriction: 0.97,
+};
+
+const theEarth = postProcessIcoMesh(icosphere(5));
+const theEarthVBO = buildVboStruct(gl, theEarth);
+
+const earthShader = makeShader(gl, passThroughSHD, worldLightSHD);
+
 const state = new (function State(canvas) {
   this.isTap = false;
   this.isDown = false;
@@ -74,49 +103,33 @@ const state = new (function State(canvas) {
   })
 })(canvas);
 
+function getMovementRelToCenter(x, y) {
+  x /= window.innerWidth; y /= window.innerHeight;
+  let center = vec3.fromValues(0.5, 0.5, 0);
+  let movement = vec3.sub(vec3.create(), vec3.fromValues(x, y, 0), center);
+  return movement;
+}
+
 state.listen('tap', (x, y) => {
   let force = vec3.sub(vec3.create(), viewMatrices.cameraTarget, viewMatrices.cameraPosition);
   vec3.normalize(force, force);
-  vec3.scale(force, force, 20);
+  vec3.scale(force, force, 28);
   applyForce(force);
 })
 
 state.listen('move', (x, y) => {
-  x /= window.innerWidth; y /= window.innerHeight;
-  let center = vec3.fromValues(0.5, 0.5, 0);
-  let movement = vec3.sub(vec3.create(), vec3.fromValues(x, y, 0), center);
+  let movement = getMovementRelToCenter(x, y);
   movement = vec3.mul(movement, movement, vec3.fromValues(1, -1, 0));
   applyOffset(vec3.scale(movement, movement, 0.3));
+})
 
-  let angle = vec3.length(movement) * 0.1;
+state.listen('up', (x, y) => {
+  let movement = getMovementRelToCenter(x, y);
+  let angle = vec3.length(movement) * 0.24;
   // Flip the movement vector perpendicular
   let rotationaxis = vec3.fromValues(movement[1], -movement[0], 0);
   applyRotationForce(angle, rotationaxis);
 })
-
-state.listen('up', (x, y) => {
-
-})
-
-const viewMatrices = {};
-const modelNode = {
-  position: vec3.create(),
-  rotation: mat4.create(),
-  scale: vec3.fromValues(1, 1, 1),
-  velocity: vec3.create(),
-  acceleration: vec3.create(),
-  mass: 20,
-  spring: 0.3,
-  damping: 0.5,
-  friction: 0.9,
-  angularVelocity: vec3.create(),
-  angularFriction: 0.97,
-};
-
-const theEarth = postProcessIcoMesh(icosphere(5));
-const theEarthVBO = buildVboStruct(gl, theEarth);
-
-const earthShader = makeShader(gl, passThroughSHD, worldLightSHD);
 
 function postProcessIcoMesh(complex) {
   let vertices = complex.positions;
@@ -180,11 +193,9 @@ function getModelMatrix(node) {
   return combinedMatrix;
 }
 
-function getOffsets(mesh, offsetX) {
-  const offsetDistance = 2.8;
-  const offsetStrength = 0.16;
+function getOffsets(mesh, offsetX, distance, strength) {
   return mesh.vertices.map((v, idx) => {
-    return vec3.scale(vec3.create(), mesh.normals[idx], noise3(offsetDistance * (v[0] + offsetX), offsetDistance * v[1], offsetDistance * v[2]) * offsetStrength);
+    return vec3.scale(vec3.create(), mesh.normals[idx], noise3(distance * (v[0] + offsetX), distance * v[1], distance * v[2]) * strength);
   });
 }
 
@@ -260,8 +271,9 @@ function applyRotationForce(angle, rotAxis) {
 
 function draw() {
   // Animation
-  vec3.add(viewMatrices.lightAngle, viewMatrices.lightAngle, vec3.fromValues(0.01 * PI, 0.005 * PI, 0.01 * PI));
+  vec3.add(viewMatrices.lightAngle, viewMatrices.lightAngle, vec3.fromValues(0.01 * PI, Math.random() * 0.01 * PI, 0.01 * PI));
   viewMatrices.noiseOffset += 0.003;
+  let modOffsetDistance = offsetDistance + Math.sin(elapsedTime() / 200) * 0.08;
 
   mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
 
@@ -286,7 +298,7 @@ function draw() {
   vec3.scale(modelNode.acceleration, modelNode.acceleration, 0.01);
   vec3.scale(modelNode.velocity, modelNode.velocity, modelNode.friction);
 
-  let offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
+  let offsets = getOffsets(theEarth, viewMatrices.noiseOffset, modOffsetDistance, offsetStrength);
   let offsetBuf = makeBuffer(gl, flatten2Buffer(offsets, 3));
 
   // Drawing
@@ -295,7 +307,7 @@ function draw() {
   // let lightPosition = vec3.add(vec3.create(), viewMatrices.cameraPosition, vec3.fromValues(4, 10, 4));
   // let lightPosition = vec3.fromValues(4, 10, 4);
   let l_a = viewMatrices.lightAngle;
-  let lightPosition = vec3.fromValues(Math.cos(l_a[0]) * 4, Math.sin(l_a[1]) * 10, Math.cos(l_a[2]) * 4);
+  let lightPosition = vec3.fromValues(Math.cos(l_a[0]) * 4, Math.cos(l_a[1]) * 4, Math.abs(Math.cos(l_a[2]) * 4) - 0.2);
 
   // Draw the Earth
   earthShader.bind();
