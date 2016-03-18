@@ -23,9 +23,10 @@ void main() {
 
   vec3 xvec = dFdx(v_position);
   vec3 yvec = dFdy(v_position);
-  vec3 n_normal = normalize(cross(xvec, yvec));
+  vec3 face_normal = normalize(cross(xvec, yvec));
+  vec3 base_normal = normalize(v_world_normal);
+  vec3 n_normal = mix(base_normal, face_normal, 0.65);
 
-  // vec3 n_normal = normalize(v_world_normal);
   vec3 to_light = normalize(u_lightWorldPosition - v_position);
   vec3 to_cam = normalize(- v_camera_position.xyz);
 

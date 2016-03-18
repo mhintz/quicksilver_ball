@@ -82,7 +82,11 @@ state.listen('tap', (x, y) => {
 })
 
 state.listen('move', (x, y) => {
-
+  x /= window.innerWidth; y /= window.innerHeight;
+  let center = vec3.fromValues(0.5, 0.5, 0);
+  let offset = vec3.sub(vec3.create(), vec3.fromValues(x, y, 0), center);
+  vec3.mul(offset, offset, vec3.fromValues(1, -1, 0));
+  applyOffset(vec3.scale(offset, offset, 0.3));
 })
 
 state.listen('up', (x, y) => {
@@ -97,6 +101,7 @@ const modelNode = {
   mass: 20,
   spring: 0.3,
   damping: 0.5,
+  friction: 0.9,
   rotation: mat4.create(),
   scale: vec3.fromValues(1, 1, 1),
 };
@@ -222,6 +227,10 @@ function velocityInDir(velvec, dirvec) {
   return vec3.scale(normdir, normdir, dirmag);
 }
 
+function applyOffset(offsetVec) {
+  vec3.add(modelNode.position, modelNode.position, offsetVec);
+}
+
 function draw() {
   // Animation
   mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
@@ -238,6 +247,7 @@ function draw() {
 
   vec3.add(modelNode.velocity, modelNode.velocity, modelNode.acceleration);
   vec3.add(modelNode.position, modelNode.position, modelNode.velocity);
+  vec3.scale(modelNode.position, modelNode.position, modelNode.friction);
   vec3.scale(modelNode.acceleration, modelNode.acceleration, 0);
 
   let offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
