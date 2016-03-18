@@ -90,6 +90,8 @@
 	// Be forewarned: OpenGL LOVES global variables and state
 	var canvas = document.getElementById('maincanvas');
 	var gl = (0, _util.getWebGLContext)(canvas);
+	var ext = gl.getExtension("OES_standard_derivatives");
+	console.log(ext);
 	var PI = Math.PI;
 	var TWO_PI = 2 * Math.PI;
 
@@ -176,27 +178,40 @@
 	state.listen('tap', function (x, y) {
 	  var force = _glMatrix.vec3.sub(_glMatrix.vec3.create(), viewMatrices.cameraTarget, viewMatrices.cameraPosition);
 	  _glMatrix.vec3.normalize(force, force);
-	  _glMatrix.vec3.scale(force, force, 10);
+	  _glMatrix.vec3.scale(force, force, 20);
 	  applyForce(force);
 	});
 
-	state.listen('move', function (x, y) {});
+	state.listen('move', function (x, y) {
+	  x /= window.innerWidth;y /= window.innerHeight;
+	  var center = _glMatrix.vec3.fromValues(0.5, 0.5, 0);
+	  var movement = _glMatrix.vec3.sub(_glMatrix.vec3.create(), _glMatrix.vec3.fromValues(x, y, 0), center);
+	  movement = _glMatrix.vec3.mul(movement, movement, _glMatrix.vec3.fromValues(1, -1, 0));
+	  applyOffset(_glMatrix.vec3.scale(movement, movement, 0.3));
+
+	  var angle = _glMatrix.vec3.length(movement);
+	  // Flip the movement vector perpendicular
+	  var rotationaxis = _glMatrix.vec3.fromValues(movement[1], -movement[0], 0);
+	  applyRotationForce(angle, rotationaxis);
+	});
 
 	state.listen('up', function (x, y) {});
 
 	var viewMatrices = {};
 	var modelNode = {
 	  position: _glMatrix.vec3.create(),
+	  rotation: _glMatrix.mat4.create(),
+	  scale: _glMatrix.vec3.fromValues(1, 1, 1),
 	  velocity: _glMatrix.vec3.create(),
 	  acceleration: _glMatrix.vec3.create(),
 	  mass: 20,
 	  spring: 0.3,
 	  damping: 0.5,
-	  rotation: _glMatrix.mat4.create(),
-	  scale: _glMatrix.vec3.fromValues(1, 1, 1)
+	  friction: 0.9,
+	  angularVelocity: _glMatrix.vec3.create()
 	};
 
-	var theEarth = postProcessIcoMesh((0, _icosphere2.default)(4));
+	var theEarth = postProcessIcoMesh((0, _icosphere2.default)(5));
 	var theEarthVBO = buildVboStruct(gl, theEarth);
 
 	var earthShader = (0, _glShader2.default)(gl, _pass_through2.default, _world_light2.default);
@@ -275,30 +290,39 @@
 	}
 
 	function getOffsets(mesh, offsetX) {
+	  var offsetDistance = 2.8;
+	  var offsetStrength = 0.16;
 	  return mesh.vertices.map(function (v, idx) {
-	    return _glMatrix.vec3.scale(_glMatrix.vec3.create(), mesh.normals[idx], (0, _util.noise3)(3.2 * (v[0] + offsetX), 3.2 * v[1], 3.2 * v[2]) * 0.09);
+	    return _glMatrix.vec3.scale(_glMatrix.vec3.create(), mesh.normals[idx], (0, _util.noise3)(offsetDistance * (v[0] + offsetX), offsetDistance * v[1], offsetDistance * v[2]) * offsetStrength);
 	  });
 	}
 
-	function setup() {
+	function setViewportSize() {
 	  var innerWidth = window.innerWidth;
 	  var innerHeight = window.innerHeight;
 	  var pixelRatio = (0, _util.getPixelRatio)();
 	  var canvasWidth = innerWidth * pixelRatio;
 	  var canvasHeight = innerHeight * pixelRatio;
 
-	  gl.canvas.width = canvasWidth;
-	  gl.canvas.height = canvasHeight;
-	  gl.canvas.style.width = innerWidth + 'px';
-	  gl.canvas.style.height = innerHeight + 'px';
+	  canvas.width = canvasWidth;
+	  canvas.height = canvasHeight;
+	  canvas.style.width = innerWidth + 'px';
+	  canvas.style.height = innerHeight + 'px';
 	  gl.viewport(0, 0, canvasWidth, canvasHeight);
+
+	  viewMatrices.projectionMatrix = _glMatrix.mat4.perspective(_glMatrix.mat4.create(), (0, _util.deg2Rad)(25), canvasWidth / canvasHeight, 0.01, 50);
+	}
+
+	window.onresize = setViewportSize;
+
+	function setup() {
+	  setViewportSize();
 
 	  gl.clearColor(0, 0, 0, 1);
 	  gl.enable(gl.CULL_FACE);
 	  gl.enable(gl.DEPTH_TEST);
 	  gl.frontFace(gl.CCW);
 
-	  viewMatrices.projectionMatrix = _glMatrix.mat4.perspective(_glMatrix.mat4.create(), (0, _util.deg2Rad)(25), canvasWidth / canvasHeight, 0.01, 50);
 	  viewMatrices.cameraPosition = _glMatrix.vec3.fromValues(0, 0, 6);
 	  viewMatrices.cameraTarget = _glMatrix.vec3.fromValues(0, 0, 0);
 	  viewMatrices.cameraUp = _glMatrix.vec3.fromValues(0, 1, 0);
@@ -319,9 +343,15 @@
 	  return _glMatrix.vec3.scale(normdir, normdir, dirmag);
 	}
 
+	function applyOffset(offsetVec) {
+	  _glMatrix.vec3.add(modelNode.position, modelNode.position, offsetVec);
+	}
+
+	function applyRotationForce(angle, rotAxis) {}
+
 	function draw() {
 	  // Animation
-	  _glMatrix.mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.003 * PI);
+	  _glMatrix.mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
 	  viewMatrices.noiseOffset += 0.003;
 
 	  var origin = _glMatrix.vec3.fromValues(0, 0, 0);
@@ -335,6 +365,7 @@
 
 	  _glMatrix.vec3.add(modelNode.velocity, modelNode.velocity, modelNode.acceleration);
 	  _glMatrix.vec3.add(modelNode.position, modelNode.position, modelNode.velocity);
+	  _glMatrix.vec3.scale(modelNode.position, modelNode.position, modelNode.friction);
 	  _glMatrix.vec3.scale(modelNode.acceleration, modelNode.acceleration, 0);
 
 	  var offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
@@ -1730,7 +1761,7 @@
   \**************************************/
 /***/ function(module, exports) {
 
-	module.exports = "precision highp float;\n#define GLSLIFY 1\n\nuniform vec3 u_lightWorldPosition;\n\nvarying vec3 v_position;\nvarying vec4 v_camera_position;\nvarying vec3 v_normal;\nvarying vec3 v_screen_normal;\nvarying vec4 v_color;\n\nstruct Material {\n  vec3 amb;\n  vec3 diff;\n  vec3 spec;\n  float shine;\n};\n\nvoid main() {\n  const Material silver = Material(vec3(0.19225, 0.19225, 0.19225), vec3(0.50754, 0.50754, 0.50754), vec3(0.508273, 0.508273, 0.508273), 0.4 * 1000.0);\n\n  vec3 n_normal = normalize(v_normal);\n  vec3 to_light = normalize(u_lightWorldPosition - v_position);\n  vec3 to_cam = normalize(- v_camera_position.xyz);\n\n  float ambient_value = 1.0;\n  float diffuse_value = max(dot(to_light, n_normal), 0.0);\n  float diffuse_dropoff = pow(diffuse_value, 2.0);\n  float spec_highlight = pow(max(dot(normalize(mix(to_light, to_cam, 0.5)), n_normal), 0.0), silver.shine);\n  // gl_FragColor = vec4(clamp(v_normal, 0.1, 1.0), 1.0);\n  // gl_FragColor = v_color * vec4(v_normal, 1);\n  // gl_FragColor = vec4(v_position, 1.0);\n  // gl_FragColor = vec4(v_normal, 1.0);\n  float chroma_value = pow(1.0 - diffuse_value, 0.4);\n  vec3 chroma = max(-v_screen_normal, 0.0) * chroma_value;\n  float alpha = v_color.a;\n  vec3 combined_color = silver.amb * ambient_value + silver.diff * diffuse_dropoff + silver.spec * spec_highlight + chroma;\n  gl_FragColor = vec4(combined_color, alpha);\n}\n"
+	module.exports = "#extension GL_OES_standard_derivatives : enable\n\nprecision highp float;\n#define GLSLIFY 1\n\nuniform vec3 u_lightWorldPosition;\n\nvarying vec3 v_position;\nvarying vec4 v_camera_position;\nvarying vec3 v_normal;\nvarying vec3 v_world_normal;\nvarying vec3 v_screen_normal;\nvarying vec4 v_color;\n\nstruct Material {\n  vec3 amb;\n  vec3 diff;\n  vec3 spec;\n  float shine;\n};\n\nvoid main() {\n  const Material silver = Material(vec3(0.19225, 0.19225, 0.19225), vec3(0.50754, 0.50754, 0.50754), vec3(0.508273, 0.508273, 0.508273), 0.4 * 1000.0);\n\n  vec3 xvec = dFdx(v_position);\n  vec3 yvec = dFdy(v_position);\n  vec3 face_normal = normalize(cross(xvec, yvec));\n  vec3 base_normal = normalize(v_world_normal);\n  vec3 n_normal = mix(base_normal, face_normal, 0.65);\n\n  vec3 to_light = normalize(u_lightWorldPosition - v_position);\n  vec3 to_cam = normalize(- v_camera_position.xyz);\n\n  float ambient_value = 1.0;\n  float diffuse_value = max(dot(to_light, n_normal), 0.0);\n  float diffuse_dropoff = pow(diffuse_value, 2.0);\n  float spec_highlight = pow(max(dot(normalize(mix(to_light, to_cam, 0.5)), n_normal), 0.0), silver.shine);\n  // gl_FragColor = vec4(clamp(v_world_normal, 0.1, 1.0), 1.0);\n  // gl_FragColor = v_color * vec4(v_world_normal, 1);\n  // gl_FragColor = vec4(v_position, 1.0);\n  // gl_FragColor = vec4(v_world_normal, 1.0);\n  float light_facing = dot(to_light, n_normal);\n  float chroma_clamp = 0.0;\n  if (light_facing > -0.3 && light_facing < -0.05) { chroma_clamp = 1.0; }\n  if (light_facing > 0.9 && light_facing < 0.95) { chroma_clamp = 1.0; }\n  float chroma_value = pow(1.0 - diffuse_value, 2.0);\n  vec3 chroma = abs(v_normal) * 0.20 * chroma_clamp;\n\n  float alpha = v_color.a;\n  vec3 combined_color = silver.amb * ambient_value + silver.diff * diffuse_dropoff + silver.spec * spec_highlight + chroma;\n  gl_FragColor = vec4(combined_color, alpha);\n}\n"
 
 /***/ },
 /* 4 */
@@ -1739,7 +1770,7 @@
   \***************************************/
 /***/ function(module, exports) {
 
-	module.exports = "precision highp float;\n#define GLSLIFY 1\n // Not necessary, but makes it explicit\n\nuniform mat4 u_projectionMatrix;\nuniform mat4 u_modelWorldMatrix;\nuniform mat4 u_modelWorldMatrix_IT;\nuniform mat4 u_worldViewMatrix;\n\nattribute vec3 a_position;\nattribute vec3 a_normal;\nattribute vec4 a_color;\nattribute vec3 a_offset;\n\nvarying vec3 v_position;\nvarying vec4 v_camera_position;\nvarying vec3 v_normal;\nvarying vec3 v_screen_normal;\nvarying vec4 v_color;\n\nvoid main() {\n  vec4 vertexWorldPosition = u_modelWorldMatrix * vec4(a_position + a_offset, 1);\n  // vec4 vertexWorldPosition = u_modelWorldMatrix * vec4(a_position, 1);\n  gl_Position = u_projectionMatrix * u_worldViewMatrix * vertexWorldPosition;\n  v_camera_position = u_worldViewMatrix * vertexWorldPosition;\n  v_position = vertexWorldPosition.xyz;\n  vec4 norm_world = u_modelWorldMatrix_IT * vec4(a_normal, 1);\n  v_normal = norm_world.xyz;\n  v_screen_normal = (u_worldViewMatrix * norm_world).xyz;\n  v_color = a_color;\n}\n"
+	module.exports = "precision highp float;\n#define GLSLIFY 1\n // Not necessary, but makes it explicit\n\nuniform mat4 u_projectionMatrix;\nuniform mat4 u_modelWorldMatrix;\nuniform mat4 u_modelWorldMatrix_IT;\nuniform mat4 u_worldViewMatrix;\n\nattribute vec3 a_position;\nattribute vec3 a_normal;\nattribute vec4 a_color;\nattribute vec3 a_offset;\n\nvarying vec3 v_position;\nvarying vec4 v_camera_position;\nvarying vec3 v_normal;\nvarying vec3 v_world_normal;\nvarying vec3 v_screen_normal;\nvarying vec4 v_color;\n\nvoid main() {\n  vec4 vertexWorldPosition = u_modelWorldMatrix * vec4(a_position + a_offset, 1);\n  // vec4 vertexWorldPosition = u_modelWorldMatrix * vec4(a_position, 1);\n  gl_Position = u_projectionMatrix * u_worldViewMatrix * vertexWorldPosition;\n  v_camera_position = u_worldViewMatrix * vertexWorldPosition;\n  v_position = vertexWorldPosition.xyz;\n  v_normal = a_normal;\n  vec4 norm_world = u_modelWorldMatrix_IT * vec4(a_normal, 1);\n  v_world_normal = norm_world.xyz;\n  v_screen_normal = (u_worldViewMatrix * norm_world).xyz;\n  v_color = a_color;\n}\n"
 
 /***/ },
 /* 5 */
