@@ -30,7 +30,7 @@ void main() {
   // gl_FragColor = v_color * vec4(v_normal, 1);
   // gl_FragColor = vec4(v_position, 1.0);
   // gl_FragColor = vec4(v_normal, 1.0);
-  float chroma_value = pow(1.0 - max(dot(to_light, n_normal), 0.0), 0.4);
+  float chroma_value = pow(1.0 - diffuse_value, 0.4);
   vec3 chroma = max(-v_screen_normal, 0.0) * chroma_value;
   float alpha = v_color.a;
   vec3 combined_color = silver.amb * ambient_value + silver.diff * diffuse_dropoff + silver.spec * spec_highlight + chroma;

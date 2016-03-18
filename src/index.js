@@ -8,11 +8,96 @@ import makeShader from 'gl-shader';
 import makeBuffer from 'gl-buffer';
 
 // Be forewarned: OpenGL LOVES global variables and state
-const gl = getWebGLContext(document.getElementById('maincanvas'));
+const canvas = document.getElementById('maincanvas');
+const gl = getWebGLContext(canvas);
 const PI = Math.PI;
 const TWO_PI = 2 * Math.PI;
 
+const state = new (function State(canvas) {
+  this.isTap = false;
+  this.isDown = false;
+  this.listeners = [];
+
+  this.down = (x, y) => {
+    this.isTap = true;
+    this.isDown = true;
+    this.fire('down', x, y);
+  }
+
+  this.move = (x, y) => {
+    if (this.isDown) {
+      this.isTap = false;
+      this.fire('move', x, y);
+    }
+  }
+
+  this.up = (x, y) => {
+    this.isDown = false;
+    if (this.isTap) {
+      this.isTap = false;
+      this.fire('tap', x, y);
+    }
+    this.fire('up', x, y);
+  }
+
+  this.listen = (name, fn) => {
+    this.listeners.push({
+      evt: name,
+      fn: fn
+    })
+  }
+
+  this.fire = (name, ...args) => {
+    this.listeners.forEach((item) => {
+      if (item.evt === name) {
+        item.fn.apply(null, args);
+      }
+    });
+  }
+
+  canvas.addEventListener('mousedown', (e) => this.down(e.pageX, e.pageY))
+  canvas.addEventListener('mouseup', (e) => this.up(e.pageX, e.pageY))
+  canvas.addEventListener('mousemove', (e) => this.move(e.pageX, e.pageY))
+  canvas.addEventListener('touchstart', (e) => {
+    let {pageX, pageY} = e.touches[0];
+    this.down(pageX, pageY);
+  });
+  canvas.addEventListener('touchend', (e) => {
+    let {pageX, pageY} = e.touches[0];
+    this.up(pageX, pageY);
+  })
+  canvas.addEventListener('touchmove', (e) => {
+    let {pageX, pageY} = e.touches[0];
+    this.move(pageX, pageY);
+  })
+})(canvas);
+
+state.listen('tap', (x, y) => {
+  let force = vec3.sub(vec3.create(), viewMatrices.cameraTarget, viewMatrices.cameraPosition);
+  vec3.normalize(force, force);
+  vec3.scale(force, force, 10);
+  applyForce(force);
+})
+
+state.listen('move', (x, y) => {
+
+})
+
+state.listen('up', (x, y) => {
+
+})
+
 const viewMatrices = {};
+const modelNode = {
+  position: vec3.create(),
+  velocity: vec3.create(),
+  acceleration: vec3.create(),
+  mass: 20,
+  spring: 0.3,
+  damping: 0.5,
+  rotation: mat4.create(),
+  scale: vec3.fromValues(1, 1, 1),
+};
 
 const theEarth = postProcessIcoMesh(icosphere(4));
 const theEarthVBO = buildVboStruct(gl, theEarth);
@@ -65,9 +150,6 @@ function buildVboStruct(gl, mesh) {
   return {
     // Mesh information
     numVertices: indices.length,
-    modelPosition: vec3.create(),
-    modelRotationMatrix: mat4.create(),
-    modelScale: vec3.fromValues(1, 1, 1),
     // Buffers and buffer information
     verticesBuffer: makeBuffer(gl, verticesData),
     normalsBuffer: makeBuffer(gl, normalsData),
@@ -76,11 +158,11 @@ function buildVboStruct(gl, mesh) {
   };
 }
 
-function getModelMatrix(modelMesh) {
+function getModelMatrix(node) {
   let combinedMatrix = mat4.create();
-  mat4.translate(combinedMatrix, combinedMatrix, modelMesh.modelPosition);
-  mat4.multiply(combinedMatrix, combinedMatrix, modelMesh.modelRotationMatrix);
-  mat4.scale(combinedMatrix, combinedMatrix, modelMesh.modelScale);
+  mat4.translate(combinedMatrix, combinedMatrix, node.position);
+  mat4.multiply(combinedMatrix, combinedMatrix, node.rotation);
+  mat4.scale(combinedMatrix, combinedMatrix, node.scale);
   return combinedMatrix;
 }
 
@@ -117,10 +199,35 @@ function setup() {
   viewMatrices.noiseOffset = 0.0;
 }
 
+function applyForce(forceVec) {
+  let accel = vec3.scale(forceVec, forceVec, 1 / modelNode.mass);
+  vec3.add(modelNode.acceleration, modelNode.acceleration, accel);
+}
+
+function velocityInDir(velvec, dirvec) {
+  // dot(v, normalize(dirvec)) * normalize(dirvec)
+  let normdir = vec3.normalize(vec3.create(), dirvec);
+  let dirmag = vec3.dot(velvec, normdir);
+  return vec3.scale(normdir, normdir, dirmag);
+}
+
 function draw() {
   // Animation
-  mat4.rotateY(theEarthVBO.modelRotationMatrix, theEarthVBO.modelRotationMatrix, -0.003 * PI);
+  mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.003 * PI);
   viewMatrices.noiseOffset += 0.003;
+
+  let origin = vec3.fromValues(0, 0, 0);
+  let toOrigin = vec3.sub(vec3.create(), origin, modelNode.position);
+  let force = vec3.scale(vec3.create(), toOrigin, modelNode.spring);
+  let velocityToOrigin = velocityInDir(modelNode.velocity, toOrigin);
+  let damping = vec3.scale(velocityToOrigin, velocityToOrigin, modelNode.damping);
+  vec3.sub(force, force, damping);
+
+  applyForce(force);
+
+  vec3.add(modelNode.velocity, modelNode.velocity, modelNode.acceleration);
+  vec3.add(modelNode.position, modelNode.position, modelNode.velocity);
+  vec3.scale(modelNode.acceleration, modelNode.acceleration, 0);
 
   let offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
   let offsetBuf = makeBuffer(gl, flatten2Buffer(offsets, 3));
@@ -138,7 +245,7 @@ function draw() {
   earthShader.uniforms.u_projectionMatrix = viewMatrices.projectionMatrix;
   earthShader.uniforms.u_worldViewMatrix = viewMatrices.viewMatrix;
 
-  let modelMatrix = getModelMatrix(theEarthVBO);
+  let modelMatrix = getModelMatrix(modelNode);
   earthShader.uniforms.u_modelWorldMatrix = modelMatrix;
 
   let modelMatrixIT = mat4.transpose(mat4.create(), mat4.invert(mat4.create(), modelMatrix));
