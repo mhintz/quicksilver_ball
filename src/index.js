@@ -1,4 +1,4 @@
-import {vec3, mat4} from 'gl-matrix';
+import {vec3, mat4, quat} from 'gl-matrix';
 import worldLightSHD from 'shaders/world_light.frag';
 import passThroughSHD from 'shaders/pass_through.vert';
 import {$, getWebGLContext, getPixelRatio, deg2Rad, elapsedTime, randNum, randRGBInt, flatten, flatten2Buffer, flatten2UIntBuffer, flatten2IndexBuffer, noise3} from 'util';
@@ -11,7 +11,6 @@ import makeBuffer from 'gl-buffer';
 const canvas = document.getElementById('maincanvas');
 const gl = getWebGLContext(canvas);
 let ext = gl.getExtension("OES_standard_derivatives");
-console.log(ext);
 const PI = Math.PI;
 const TWO_PI = 2 * Math.PI;
 
@@ -58,35 +57,41 @@ const state = new (function State(canvas) {
   }
 
   canvas.addEventListener('mousedown', (e) => this.down(e.pageX, e.pageY))
-  canvas.addEventListener('mouseup', (e) => this.up(e.pageX, e.pageY))
   canvas.addEventListener('mousemove', (e) => this.move(e.pageX, e.pageY))
+  canvas.addEventListener('mouseup', (e) => this.up(e.pageX, e.pageY))
+  canvas.addEventListener('mouseout', (e) => this.up(e.pageX, e.pageY))
   canvas.addEventListener('touchstart', (e) => {
     let {pageX, pageY} = e.touches[0];
     this.down(pageX, pageY);
   });
-  canvas.addEventListener('touchend', (e) => {
-    let {pageX, pageY} = e.touches[0];
-    this.up(pageX, pageY);
-  })
   canvas.addEventListener('touchmove', (e) => {
     let {pageX, pageY} = e.touches[0];
     this.move(pageX, pageY);
+  })
+  canvas.addEventListener('touchend', (e) => {
+    let {pageX, pageY} = e.touches[0];
+    this.up(pageX, pageY);
   })
 })(canvas);
 
 state.listen('tap', (x, y) => {
   let force = vec3.sub(vec3.create(), viewMatrices.cameraTarget, viewMatrices.cameraPosition);
   vec3.normalize(force, force);
-  vec3.scale(force, force, 10);
+  vec3.scale(force, force, 20);
   applyForce(force);
 })
 
 state.listen('move', (x, y) => {
   x /= window.innerWidth; y /= window.innerHeight;
   let center = vec3.fromValues(0.5, 0.5, 0);
-  let offset = vec3.sub(vec3.create(), vec3.fromValues(x, y, 0), center);
-  vec3.mul(offset, offset, vec3.fromValues(1, -1, 0));
-  applyOffset(vec3.scale(offset, offset, 0.3));
+  let movement = vec3.sub(vec3.create(), vec3.fromValues(x, y, 0), center);
+  movement = vec3.mul(movement, movement, vec3.fromValues(1, -1, 0));
+  applyOffset(vec3.scale(movement, movement, 0.3));
+
+  let angle = vec3.length(movement) * 0.1;
+  // Flip the movement vector perpendicular
+  let rotationaxis = vec3.fromValues(movement[1], -movement[0], 0);
+  applyRotationForce(angle, rotationaxis);
 })
 
 state.listen('up', (x, y) => {
@@ -96,14 +101,16 @@ state.listen('up', (x, y) => {
 const viewMatrices = {};
 const modelNode = {
   position: vec3.create(),
+  rotation: mat4.create(),
+  scale: vec3.fromValues(1, 1, 1),
   velocity: vec3.create(),
   acceleration: vec3.create(),
   mass: 20,
   spring: 0.3,
   damping: 0.5,
   friction: 0.9,
-  rotation: mat4.create(),
-  scale: vec3.fromValues(1, 1, 1),
+  angularVelocity: vec3.create(),
+  angularFriction: 0.97,
 };
 
 const theEarth = postProcessIcoMesh(icosphere(5));
@@ -231,10 +238,36 @@ function applyOffset(offsetVec) {
   vec3.add(modelNode.position, modelNode.position, offsetVec);
 }
 
+function angularVelToQuat(avel) {
+  let rot_q = quat.create();
+  let angle = vec3.length(avel);
+  let norm = vec3.normalize(vec3.create(), avel);
+  let sinHalfAngle = Math.sin(angle / 2);
+  let x = norm[0] * sinHalfAngle;
+  let y = norm[1] * sinHalfAngle;
+  let z = norm[2] * sinHalfAngle;
+  let w = Math.cos(angle / 2);
+  rot_q = quat.fromValues(x, y, z, w);
+  return quat.normalize(rot_q, rot_q);
+}
+
+function applyRotationForce(angle, rotAxis) {
+  let r_axis = vec3.normalize(vec3.create(), rotAxis);
+  let angularPush = vec3.scale(r_axis, r_axis, -angle);
+  vec3.add(modelNode.angularVelocity, modelNode.angularVelocity, angularPush);
+}
+
 function draw() {
   // Animation
-  mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
   viewMatrices.noiseOffset += 0.003;
+
+  mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
+
+  let angularQuat = angularVelToQuat(modelNode.angularVelocity);
+  let angularMat = mat4.fromQuat(mat4.create(), angularQuat);
+  mat4.multiply(modelNode.rotation, modelNode.rotation, angularMat);
+
+  vec3.scale(modelNode.angularVelocity, modelNode.angularVelocity, modelNode.angularFriction);
 
   let origin = vec3.fromValues(0, 0, 0);
   let toOrigin = vec3.sub(vec3.create(), origin, modelNode.position);
@@ -247,8 +280,9 @@ function draw() {
 
   vec3.add(modelNode.velocity, modelNode.velocity, modelNode.acceleration);
   vec3.add(modelNode.position, modelNode.position, modelNode.velocity);
-  vec3.scale(modelNode.position, modelNode.position, modelNode.friction);
-  vec3.scale(modelNode.acceleration, modelNode.acceleration, 0);
+
+  vec3.scale(modelNode.acceleration, modelNode.acceleration, 0.01);
+  vec3.scale(modelNode.velocity, modelNode.velocity, modelNode.friction);
 
   let offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
   let offsetBuf = makeBuffer(gl, flatten2Buffer(offsets, 3));
