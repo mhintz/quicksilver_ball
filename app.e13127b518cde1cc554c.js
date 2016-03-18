@@ -195,6 +195,7 @@
 	    var pageX = _e$touches$2.pageX;
 	    var pageY = _e$touches$2.pageY;
 
+	    e.preventDefault();
 	    _this.move(pageX, pageY);
 	  });
 	  canvas.addEventListener('touchend', function (e) {
