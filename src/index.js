@@ -220,6 +220,7 @@ function setup() {
   viewMatrices.viewMatrix = mat4.lookAt(mat4.create(), viewMatrices.cameraPosition, viewMatrices.cameraTarget, viewMatrices.cameraUp);
 
   viewMatrices.noiseOffset = 0.0;
+  viewMatrices.lightAngle = vec3.fromValues(0.1 * PI, 0.2 * PI, 0.3 * PI);
 }
 
 function applyForce(forceVec) {
@@ -259,6 +260,7 @@ function applyRotationForce(angle, rotAxis) {
 
 function draw() {
   // Animation
+  vec3.add(viewMatrices.lightAngle, viewMatrices.lightAngle, vec3.fromValues(0.01 * PI, 0.005 * PI, 0.01 * PI));
   viewMatrices.noiseOffset += 0.003;
 
   mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
@@ -290,7 +292,10 @@ function draw() {
   // Drawing
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-  let lightPosition = vec3.add(vec3.create(), viewMatrices.cameraPosition, vec3.fromValues(4, 10, 4));
+  // let lightPosition = vec3.add(vec3.create(), viewMatrices.cameraPosition, vec3.fromValues(4, 10, 4));
+  // let lightPosition = vec3.fromValues(4, 10, 4);
+  let l_a = viewMatrices.lightAngle;
+  let lightPosition = vec3.fromValues(Math.cos(l_a[0]) * 4, Math.sin(l_a[1]) * 10, Math.cos(l_a[2]) * 4);
 
   // Draw the Earth
   earthShader.bind();
