@@ -95,6 +95,7 @@ const state = new (function State(canvas) {
   });
   canvas.addEventListener('touchmove', (e) => {
     let {pageX, pageY} = e.touches[0];
+    e.preventDefault();
     this.move(pageX, pageY);
   })
   canvas.addEventListener('touchend', (e) => {
