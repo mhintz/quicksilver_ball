@@ -112,6 +112,7 @@ function getMovementRelToCenter(x, y) {
 
 state.listen('tap', (x, y) => {
   let force = vec3.sub(vec3.create(), viewMatrices.cameraTarget, viewMatrices.cameraPosition);
+  vec3.add(force, force, vec3.fromValues((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, Math.random()));
   vec3.normalize(force, force);
   vec3.scale(force, force, 28);
   applyForce(force);
@@ -273,7 +274,7 @@ function draw() {
   // Animation
   vec3.add(viewMatrices.lightAngle, viewMatrices.lightAngle, vec3.fromValues(0.01 * PI, Math.random() * 0.01 * PI, 0.01 * PI));
   viewMatrices.noiseOffset += 0.003;
-  let modOffsetDistance = offsetDistance + Math.sin(elapsedTime() / 200) * 0.08;
+  let modOffsetDistance = offsetDistance + Math.sin(elapsedTime() / 1000) * 0.08;
 
   mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
 
