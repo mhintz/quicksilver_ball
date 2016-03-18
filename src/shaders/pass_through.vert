@@ -13,6 +13,7 @@ attribute vec3 a_offset;
 varying vec3 v_position;
 varying vec4 v_camera_position;
 varying vec3 v_normal;
+varying vec3 v_world_normal;
 varying vec3 v_screen_normal;
 varying vec4 v_color;
 
@@ -22,8 +23,9 @@ void main() {
   gl_Position = u_projectionMatrix * u_worldViewMatrix * vertexWorldPosition;
   v_camera_position = u_worldViewMatrix * vertexWorldPosition;
   v_position = vertexWorldPosition.xyz;
+  v_normal = a_normal;
   vec4 norm_world = u_modelWorldMatrix_IT * vec4(a_normal, 1);
-  v_normal = norm_world.xyz;
+  v_world_normal = norm_world.xyz;
   v_screen_normal = (u_worldViewMatrix * norm_world).xyz;
   v_color = a_color;
 }

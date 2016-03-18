@@ -10,6 +10,8 @@ import makeBuffer from 'gl-buffer';
 // Be forewarned: OpenGL LOVES global variables and state
 const canvas = document.getElementById('maincanvas');
 const gl = getWebGLContext(canvas);
+let ext = gl.getExtension("OES_standard_derivatives");
+console.log(ext);
 const PI = Math.PI;
 const TWO_PI = 2 * Math.PI;
 
@@ -99,7 +101,7 @@ const modelNode = {
   scale: vec3.fromValues(1, 1, 1),
 };
 
-const theEarth = postProcessIcoMesh(icosphere(4));
+const theEarth = postProcessIcoMesh(icosphere(5));
 const theEarthVBO = buildVboStruct(gl, theEarth);
 
 const earthShader = makeShader(gl, passThroughSHD, worldLightSHD);
@@ -167,30 +169,39 @@ function getModelMatrix(node) {
 }
 
 function getOffsets(mesh, offsetX) {
+  const offsetDistance = 2.8;
+  const offsetStrength = 0.16;
   return mesh.vertices.map((v, idx) => {
-    return vec3.scale(vec3.create(), mesh.normals[idx], noise3(3.2 * (v[0] + offsetX), 3.2 * v[1], 3.2 * v[2]) * 0.09);
+    return vec3.scale(vec3.create(), mesh.normals[idx], noise3(offsetDistance * (v[0] + offsetX), offsetDistance * v[1], offsetDistance * v[2]) * offsetStrength);
   });
 }
 
-function setup() {
+function setViewportSize() {
   let innerWidth = window.innerWidth;
   let innerHeight = window.innerHeight;
   let pixelRatio = getPixelRatio();
   let canvasWidth = innerWidth * pixelRatio;
   let canvasHeight = innerHeight * pixelRatio;
 
-  gl.canvas.width = canvasWidth;
-  gl.canvas.height = canvasHeight;
-  gl.canvas.style.width = innerWidth + 'px';
-  gl.canvas.style.height = innerHeight + 'px';
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
   gl.viewport(0, 0, canvasWidth, canvasHeight);
+
+  viewMatrices.projectionMatrix = mat4.perspective(mat4.create(), deg2Rad(25), canvasWidth / canvasHeight, 0.01, 50);
+}
+
+window.onresize = setViewportSize;
+
+function setup() {
+  setViewportSize();
 
   gl.clearColor(0, 0, 0, 1);
   gl.enable(gl.CULL_FACE);
   gl.enable(gl.DEPTH_TEST);
   gl.frontFace(gl.CCW);
 
-  viewMatrices.projectionMatrix = mat4.perspective(mat4.create(), deg2Rad(25), canvasWidth / canvasHeight, 0.01, 50);
   viewMatrices.cameraPosition = vec3.fromValues(0, 0, 6);
   viewMatrices.cameraTarget = vec3.fromValues(0, 0, 0);
   viewMatrices.cameraUp = vec3.fromValues(0, 1, 0);
@@ -213,7 +224,7 @@ function velocityInDir(velvec, dirvec) {
 
 function draw() {
   // Animation
-  mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.003 * PI);
+  mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.001 * PI);
   viewMatrices.noiseOffset += 0.003;
 
   let origin = vec3.fromValues(0, 0, 0);
