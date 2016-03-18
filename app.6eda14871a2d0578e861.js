@@ -73,32 +73,133 @@
 
 	var _util = __webpack_require__(/*! util */ 5);
 
-	var _icosphere = __webpack_require__(/*! icosphere */ 6);
+	var _icosphere = __webpack_require__(/*! icosphere */ 7);
 
 	var _icosphere2 = _interopRequireDefault(_icosphere);
 
-	var _glShader = __webpack_require__(/*! gl-shader */ 7);
+	var _glShader = __webpack_require__(/*! gl-shader */ 8);
 
 	var _glShader2 = _interopRequireDefault(_glShader);
 
-	var _glBuffer = __webpack_require__(/*! gl-buffer */ 33);
+	var _glBuffer = __webpack_require__(/*! gl-buffer */ 34);
 
 	var _glBuffer2 = _interopRequireDefault(_glBuffer);
 
 	function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 	// Be forewarned: OpenGL LOVES global variables and state
-	var gl = (0, _util.getWebGLContext)(document.getElementById('maincanvas'));
+	var canvas = document.getElementById('maincanvas');
+	var gl = (0, _util.getWebGLContext)(canvas);
 	var PI = Math.PI;
 	var TWO_PI = 2 * Math.PI;
 
-	var viewMatrices = {};
+	var state = new function State(canvas) {
+	  var _this = this;
 
-	var theEarth = postProcessIcoMesh((0, _icosphere2.default)(3));
-	var theMoon = postProcessIcoMesh((0, _icosphere2.default)(0));
+	  this.isTap = false;
+	  this.isDown = false;
+	  this.listeners = [];
+
+	  this.down = function (x, y) {
+	    _this.isTap = true;
+	    _this.isDown = true;
+	    _this.fire('down', x, y);
+	  };
+
+	  this.move = function (x, y) {
+	    if (_this.isDown) {
+	      _this.isTap = false;
+	      _this.fire('move', x, y);
+	    }
+	  };
+
+	  this.up = function (x, y) {
+	    _this.isDown = false;
+	    if (_this.isTap) {
+	      _this.isTap = false;
+	      _this.fire('tap', x, y);
+	    }
+	    _this.fire('up', x, y);
+	  };
+
+	  this.listen = function (name, fn) {
+	    _this.listeners.push({
+	      evt: name,
+	      fn: fn
+	    });
+	  };
+
+	  this.fire = function (name) {
+	    for (var _len = arguments.length, args = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+	      args[_key - 1] = arguments[_key];
+	    }
+
+	    _this.listeners.forEach(function (item) {
+	      if (item.evt === name) {
+	        item.fn.apply(null, args);
+	      }
+	    });
+	  };
+
+	  canvas.addEventListener('mousedown', function (e) {
+	    return _this.down(e.pageX, e.pageY);
+	  });
+	  canvas.addEventListener('mouseup', function (e) {
+	    return _this.up(e.pageX, e.pageY);
+	  });
+	  canvas.addEventListener('mousemove', function (e) {
+	    return _this.move(e.pageX, e.pageY);
+	  });
+	  canvas.addEventListener('touchstart', function (e) {
+	    var _e$touches$ = e.touches[0];
+	    var pageX = _e$touches$.pageX;
+	    var pageY = _e$touches$.pageY;
+
+	    _this.down(pageX, pageY);
+	  });
+	  canvas.addEventListener('touchend', function (e) {
+	    var _e$touches$2 = e.touches[0];
+	    var pageX = _e$touches$2.pageX;
+	    var pageY = _e$touches$2.pageY;
+
+	    _this.up(pageX, pageY);
+	  });
+	  canvas.addEventListener('touchmove', function (e) {
+	    var _e$touches$3 = e.touches[0];
+	    var pageX = _e$touches$3.pageX;
+	    var pageY = _e$touches$3.pageY;
+
+	    _this.move(pageX, pageY);
+	  });
+	}(canvas);
+
+	state.listen('tap', function (x, y) {
+	  var force = _glMatrix.vec3.sub(_glMatrix.vec3.create(), viewMatrices.cameraTarget, viewMatrices.cameraPosition);
+	  _glMatrix.vec3.normalize(force, force);
+	  _glMatrix.vec3.scale(force, force, 10);
+	  applyForce(force);
+	});
+
+	state.listen('move', function (x, y) {});
+
+	state.listen('up', function (x, y) {});
+
+	var viewMatrices = {};
+	var modelNode = {
+	  position: _glMatrix.vec3.create(),
+	  velocity: _glMatrix.vec3.create(),
+	  acceleration: _glMatrix.vec3.create(),
+	  mass: 20,
+	  spring: 0.3,
+	  damping: 0.5,
+	  rotation: _glMatrix.mat4.create(),
+	  scale: _glMatrix.vec3.fromValues(1, 1, 1)
+	};
+
+	var theEarth = postProcessIcoMesh((0, _icosphere2.default)(4));
+	var theEarthVBO = buildVboStruct(gl, theEarth);
 
 	var earthShader = (0, _glShader2.default)(gl, _pass_through2.default, _world_light2.default);
-	var moonShader = (0, _glShader2.default)(gl, _pass_through2.default, _world_light2.default);
 
 	function postProcessIcoMesh(complex) {
 	  var vertices = complex.positions;
@@ -141,41 +242,42 @@
 	    return _glMatrix.vec3.normalize(n, n);
 	  });
 
-	  var offsets = normals.map(function (n) {
-	    return _glMatrix.vec3.scale(_glMatrix.vec3.create(), n, (0, _util.randNum)(-0.5, 0.5));
-	  });
+	  return {
+	    vertices: vertices, normals: normals, colors: colors,
+	    indices: faceIndices
+	  };
+	}
 
-	  var numVertexElements = 3;
-	  var numNormalElements = 3;
-	  var numColorElements = 4;
+	function buildVboStruct(gl, mesh) {
+	  var verticesData = (0, _util.flatten2Buffer)(mesh.vertices, 3);
+	  var normalsData = (0, _util.flatten2Buffer)(mesh.normals, 3);
+	  var colorsData = (0, _util.flatten2UIntBuffer)(mesh.colors, 4);
 
-	  var verticesData = (0, _util.flatten2Buffer)(vertices, 3);
-	  var normalsData = (0, _util.flatten2Buffer)(normals, 3);
-	  var colorsData = (0, _util.flatten2UIntBuffer)(colors, 4);
-	  var offsetData = (0, _util.flatten2Buffer)(offsets, 3);
-	  var meshIndexes = (0, _util.flatten2IndexBuffer)(faceIndices, 3);
+	  var indices = (0, _util.flatten2IndexBuffer)(mesh.indices, 3);
 
 	  return {
 	    // Mesh information
-	    numVertices: meshIndexes.length,
-	    modelPosition: _glMatrix.vec3.create(),
-	    modelRotationMatrix: _glMatrix.mat4.create(),
-	    modelScale: _glMatrix.vec3.fromValues(1, 1, 1),
+	    numVertices: indices.length,
 	    // Buffers and buffer information
 	    verticesBuffer: (0, _glBuffer2.default)(gl, verticesData),
 	    normalsBuffer: (0, _glBuffer2.default)(gl, normalsData),
 	    colorsBuffer: (0, _glBuffer2.default)(gl, colorsData),
-	    offsetBuffer: (0, _glBuffer2.default)(gl, offsetData),
-	    meshIndexes: (0, _glBuffer2.default)(gl, meshIndexes, gl.ELEMENT_ARRAY_BUFFER)
+	    meshIndexes: (0, _glBuffer2.default)(gl, indices, gl.ELEMENT_ARRAY_BUFFER)
 	  };
 	}
 
-	function getModelMatrix(modelMesh) {
+	function getModelMatrix(node) {
 	  var combinedMatrix = _glMatrix.mat4.create();
-	  _glMatrix.mat4.translate(combinedMatrix, combinedMatrix, modelMesh.modelPosition);
-	  _glMatrix.mat4.multiply(combinedMatrix, combinedMatrix, modelMesh.modelRotationMatrix);
-	  _glMatrix.mat4.scale(combinedMatrix, combinedMatrix, modelMesh.modelScale);
+	  _glMatrix.mat4.translate(combinedMatrix, combinedMatrix, node.position);
+	  _glMatrix.mat4.multiply(combinedMatrix, combinedMatrix, node.rotation);
+	  _glMatrix.mat4.scale(combinedMatrix, combinedMatrix, node.scale);
 	  return combinedMatrix;
+	}
+
+	function getOffsets(mesh, offsetX) {
+	  return mesh.vertices.map(function (v, idx) {
+	    return _glMatrix.vec3.scale(_glMatrix.vec3.create(), mesh.normals[idx], (0, _util.noise3)(3.2 * (v[0] + offsetX), 3.2 * v[1], 3.2 * v[2]) * 0.09);
+	  });
 	}
 
 	function setup() {
@@ -197,35 +299,49 @@
 	  gl.frontFace(gl.CCW);
 
 	  viewMatrices.projectionMatrix = _glMatrix.mat4.perspective(_glMatrix.mat4.create(), (0, _util.deg2Rad)(25), canvasWidth / canvasHeight, 0.01, 50);
-	  viewMatrices.cameraPosition = _glMatrix.vec3.fromValues(0, 0, 9);
+	  viewMatrices.cameraPosition = _glMatrix.vec3.fromValues(0, 0, 6);
 	  viewMatrices.cameraTarget = _glMatrix.vec3.fromValues(0, 0, 0);
 	  viewMatrices.cameraUp = _glMatrix.vec3.fromValues(0, 1, 0);
 	  viewMatrices.viewMatrix = _glMatrix.mat4.lookAt(_glMatrix.mat4.create(), viewMatrices.cameraPosition, viewMatrices.cameraTarget, viewMatrices.cameraUp);
 
-	  theMoon.modelScale = _glMatrix.vec3.fromValues(0.2, 0.2, 0.2);
+	  viewMatrices.noiseOffset = 0.0;
+	}
+
+	function applyForce(forceVec) {
+	  var accel = _glMatrix.vec3.scale(forceVec, forceVec, 1 / modelNode.mass);
+	  _glMatrix.vec3.add(modelNode.acceleration, modelNode.acceleration, accel);
+	}
+
+	function velocityInDir(velvec, dirvec) {
+	  // dot(v, normalize(dirvec)) * normalize(dirvec)
+	  var normdir = _glMatrix.vec3.normalize(_glMatrix.vec3.create(), dirvec);
+	  var dirmag = _glMatrix.vec3.dot(velvec, normdir);
+	  return _glMatrix.vec3.scale(normdir, normdir, dirmag);
 	}
 
 	function draw() {
 	  // Animation
-	  theMoon.modelPosition[0] = 3 * Math.cos(0.001 * (0, _util.elapsedTime)());
-	  theMoon.modelPosition[2] = 3 * Math.sin(0.001 * (0, _util.elapsedTime)());
-	  _glMatrix.mat4.rotateY(theMoon.modelRotationMatrix, theMoon.modelRotationMatrix, 0.006 * PI);
-	  _glMatrix.mat4.rotateY(theEarth.modelRotationMatrix, theEarth.modelRotationMatrix, -0.003 * PI);
+	  _glMatrix.mat4.rotateY(modelNode.rotation, modelNode.rotation, -0.003 * PI);
+	  viewMatrices.noiseOffset += 0.003;
+
+	  var origin = _glMatrix.vec3.fromValues(0, 0, 0);
+	  var toOrigin = _glMatrix.vec3.sub(_glMatrix.vec3.create(), origin, modelNode.position);
+	  var force = _glMatrix.vec3.scale(_glMatrix.vec3.create(), toOrigin, modelNode.spring);
+	  var velocityToOrigin = velocityInDir(modelNode.velocity, toOrigin);
+	  var damping = _glMatrix.vec3.scale(velocityToOrigin, velocityToOrigin, modelNode.damping);
+	  _glMatrix.vec3.sub(force, force, damping);
+
+	  applyForce(force);
+
+	  _glMatrix.vec3.add(modelNode.velocity, modelNode.velocity, modelNode.acceleration);
+	  _glMatrix.vec3.add(modelNode.position, modelNode.position, modelNode.velocity);
+	  _glMatrix.vec3.scale(modelNode.acceleration, modelNode.acceleration, 0);
+
+	  var offsets = getOffsets(theEarth, viewMatrices.noiseOffset);
+	  var offsetBuf = (0, _glBuffer2.default)(gl, (0, _util.flatten2Buffer)(offsets, 3));
 
 	  // Drawing
 	  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-	  // Misc variables used below
-	  var lightPosLoc = void 0;
-	  var projMatLoc = void 0;
-	  var viewMatLoc = void 0;
-	  var modelMatrix = void 0;
-	  var modelMatLoc = void 0;
-	  var modelMatrixIT = void 0;
-	  var modelMatITLoc = void 0;
-	  var posLoc = void 0;
-	  var normLoc = void 0;
-	  var colorLoc = void 0;
 
 	  var lightPosition = _glMatrix.vec3.add(_glMatrix.vec3.create(), viewMatrices.cameraPosition, _glMatrix.vec3.fromValues(4, 10, 4));
 
@@ -233,54 +349,31 @@
 	  earthShader.bind();
 
 	  earthShader.uniforms.u_lightWorldPosition = lightPosition;
+	  // earthShader.uniforms.u_lightWorldPosition = viewMatrices.cameraPosition;
 	  earthShader.uniforms.u_projectionMatrix = viewMatrices.projectionMatrix;
 	  earthShader.uniforms.u_worldViewMatrix = viewMatrices.viewMatrix;
 
-	  modelMatrix = getModelMatrix(theEarth);
+	  var modelMatrix = getModelMatrix(modelNode);
 	  earthShader.uniforms.u_modelWorldMatrix = modelMatrix;
 
-	  modelMatrixIT = _glMatrix.mat4.transpose(_glMatrix.mat4.create(), _glMatrix.mat4.invert(_glMatrix.mat4.create(), modelMatrix));
+	  var modelMatrixIT = _glMatrix.mat4.transpose(_glMatrix.mat4.create(), _glMatrix.mat4.invert(_glMatrix.mat4.create(), modelMatrix));
 	  earthShader.uniforms.u_modelWorldMatrix_IT = modelMatrixIT;
 
-	  theEarth.verticesBuffer.bind();
+	  theEarthVBO.verticesBuffer.bind();
 	  earthShader.attributes.a_position.pointer();
 
-	  theEarth.normalsBuffer.bind();
+	  theEarthVBO.normalsBuffer.bind();
 	  earthShader.attributes.a_normal.pointer();
 
-	  theEarth.colorsBuffer.bind();
+	  theEarthVBO.colorsBuffer.bind();
 	  earthShader.attributes.a_color.pointer(gl.UNSIGNED_BYTE, true);
 
-	  theEarth.offsetBuffer.bind();
+	  offsetBuf.bind();
 	  earthShader.attributes.a_offset.pointer();
 
-	  theEarth.meshIndexes.bind();
+	  theEarthVBO.meshIndexes.bind();
 
-	  gl.drawElements(gl.TRIANGLES, theEarth.numVertices, gl.UNSIGNED_SHORT, 0);
-
-	  // // Draw the Moon
-	  // moonShader.bind();
-
-	  // moonShader.uniforms.u_lightWorldPosition = lightPosition;
-	  // moonShader.uniforms.u_projectionMatrix = viewMatrices.projectionMatrix;
-	  // moonShader.uniforms.u_worldViewMatrix = viewMatrices.viewMatrix;
-
-	  // modelMatrix = getModelMatrix(theMoon);
-	  // moonShader.uniforms.u_modelWorldMatrix = modelMatrix;
-
-	  // modelMatrixIT = mat4.transpose(mat4.create(), mat4.invert(mat4.create(), modelMatrix));
-	  // moonShader.uniforms.u_modelWorldMatrix_IT = modelMatrixIT;
-
-	  // theMoon.verticesBuffer.bind();
-	  // moonShader.attributes.a_position.pointer();
-
-	  // theMoon.normalsBuffer.bind();
-	  // moonShader.attributes.a_normal.pointer();
-
-	  // theMoon.colorsBuffer.bind();
-	  // moonShader.attributes.a_color.pointer(gl.UNSIGNED_BYTE, true);
-
-	  // gl.drawArrays(gl.TRIANGLES, 0, theMoon.numVertices);
+	  gl.drawElements(gl.TRIANGLES, theEarthVBO.numVertices, gl.UNSIGNED_SHORT, 0);
 	}
 
 	function prepareGLBuffer(bufferData, bufferUsage) {
@@ -1637,7 +1730,7 @@
   \**************************************/
 /***/ function(module, exports) {
 
-	module.exports = "precision highp float;\n#define GLSLIFY 1\n\nuniform vec3 u_lightWorldPosition;\n\nvarying vec3 v_position;\nvarying vec3 v_normal;\nvarying vec4 v_color;\n\nvoid main() {\n  vec3 n_normal = normalize(v_normal);\n  vec3 tocamera = normalize(u_lightWorldPosition - v_position);\n  // gl_FragColor = vec4(clamp(v_normal, 0.1, 1.0), 1.0);\n  // gl_FragColor = v_color * vec4(v_normal, 1);\n  // gl_FragColor = vec4(v_position, 1.0);\n  float incidence = dot(tocamera, n_normal);\n  gl_FragColor = vec4((0.15 + pow(clamp(incidence, 0., 1.), 2.5)) * v_color.rgb, 1.);\n}\n"
+	module.exports = "precision highp float;\n#define GLSLIFY 1\n\nuniform vec3 u_lightWorldPosition;\n\nvarying vec3 v_position;\nvarying vec4 v_camera_position;\nvarying vec3 v_normal;\nvarying vec3 v_screen_normal;\nvarying vec4 v_color;\n\nstruct Material {\n  vec3 amb;\n  vec3 diff;\n  vec3 spec;\n  float shine;\n};\n\nvoid main() {\n  const Material silver = Material(vec3(0.19225, 0.19225, 0.19225), vec3(0.50754, 0.50754, 0.50754), vec3(0.508273, 0.508273, 0.508273), 0.4 * 1000.0);\n\n  vec3 n_normal = normalize(v_normal);\n  vec3 to_light = normalize(u_lightWorldPosition - v_position);\n  vec3 to_cam = normalize(- v_camera_position.xyz);\n\n  float ambient_value = 1.0;\n  float diffuse_value = max(dot(to_light, n_normal), 0.0);\n  float diffuse_dropoff = pow(diffuse_value, 2.0);\n  float spec_highlight = pow(max(dot(normalize(mix(to_light, to_cam, 0.5)), n_normal), 0.0), silver.shine);\n  // gl_FragColor = vec4(clamp(v_normal, 0.1, 1.0), 1.0);\n  // gl_FragColor = v_color * vec4(v_normal, 1);\n  // gl_FragColor = vec4(v_position, 1.0);\n  // gl_FragColor = vec4(v_normal, 1.0);\n  float chroma_value = pow(1.0 - diffuse_value, 0.4);\n  vec3 chroma = max(-v_screen_normal, 0.0) * chroma_value;\n  float alpha = v_color.a;\n  vec3 combined_color = silver.amb * ambient_value + silver.diff * diffuse_dropoff + silver.spec * spec_highlight + chroma;\n  gl_FragColor = vec4(combined_color, alpha);\n}\n"
 
 /***/ },
 /* 4 */
@@ -1646,22 +1739,41 @@
   \***************************************/
 /***/ function(module, exports) {
 
-	module.exports = "precision highp float;\n#define GLSLIFY 1\n // Not necessary, but makes it explicit\n\nuniform mat4 u_projectionMatrix;\nuniform mat4 u_modelWorldMatrix;\nuniform mat4 u_modelWorldMatrix_IT;\nuniform mat4 u_worldViewMatrix;\n\nattribute vec3 a_position;\nattribute vec3 a_normal;\nattribute vec4 a_color;\nattribute vec3 a_offset;\n\nvarying vec3 v_position;\nvarying vec3 v_normal;\nvarying vec4 v_color;\n\nvoid main() {\n  vec4 vertexWorldPosition = u_modelWorldMatrix * vec4(a_position + a_offset, 1);\n  // vec4 vertexWorldPosition = u_modelWorldMatrix * vec4(a_position, 1);\n  gl_Position = u_projectionMatrix * u_worldViewMatrix * vertexWorldPosition;\n  v_position = vertexWorldPosition.xyz;\n  v_normal = (u_modelWorldMatrix_IT * vec4(a_normal, 1)).xyz;\n  v_color = a_color;\n}\n"
+	module.exports = "precision highp float;\n#define GLSLIFY 1\n // Not necessary, but makes it explicit\n\nuniform mat4 u_projectionMatrix;\nuniform mat4 u_modelWorldMatrix;\nuniform mat4 u_modelWorldMatrix_IT;\nuniform mat4 u_worldViewMatrix;\n\nattribute vec3 a_position;\nattribute vec3 a_normal;\nattribute vec4 a_color;\nattribute vec3 a_offset;\n\nvarying vec3 v_position;\nvarying vec4 v_camera_position;\nvarying vec3 v_normal;\nvarying vec3 v_screen_normal;\nvarying vec4 v_color;\n\nvoid main() {\n  vec4 vertexWorldPosition = u_modelWorldMatrix * vec4(a_position + a_offset, 1);\n  // vec4 vertexWorldPosition = u_modelWorldMatrix * vec4(a_position, 1);\n  gl_Position = u_projectionMatrix * u_worldViewMatrix * vertexWorldPosition;\n  v_camera_position = u_worldViewMatrix * vertexWorldPosition;\n  v_position = vertexWorldPosition.xyz;\n  vec4 norm_world = u_modelWorldMatrix_IT * vec4(a_normal, 1);\n  v_normal = norm_world.xyz;\n  v_screen_normal = (u_worldViewMatrix * norm_world).xyz;\n  v_color = a_color;\n}\n"
 
 /***/ },
 /* 5 */
 /*!*********************!*\
   !*** ./src/util.js ***!
   \*********************/
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
 	'use strict';
-
-	// Helper functions - Util
 
 	Object.defineProperty(exports, "__esModule", {
 	  value: true
 	});
+	exports.flatten2IndexBuffer = exports.flatten2UIntBuffer = exports.flatten2Buffer = exports.flatten2 = exports.flatten = exports.randRGBInt = exports.randRGB = exports.randNum = exports.rad2Deg = exports.deg2Rad = exports.getWebGLContext = exports.getPixelRatio = exports.elapsedTime = exports.$ = exports.noise4 = exports.noise3 = exports.noise2 = undefined;
+
+	var _simplexNoise = __webpack_require__(/*! simplex-noise */ 6);
+
+	var _simplexNoise2 = _interopRequireDefault(_simplexNoise);
+
+	function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+	var simplex = new _simplexNoise2.default();
+
+	var noise2 = exports.noise2 = function noise2(x, y) {
+	  return simplex.noise2D(x, y);
+	};
+	var noise3 = exports.noise3 = function noise3(x, y, z) {
+	  return simplex.noise3D(x, y, z);
+	};
+	var noise4 = exports.noise4 = function noise4(x, y, z, w) {
+	  return simplex.noise4D(x, y, z, w);
+	};
+
+	// Helper functions - Util
 	var $ = exports.$ = function $(id) {
 	  return document.getElementById(id);
 	};
@@ -1703,11 +1815,18 @@
 	  return [randNum(255), randNum(255), randNum(255), 255];
 	};
 
+	var flatten = exports.flatten = function flatten(arr) {
+	  return arr.reduce(function (flat, item) {
+	    // Recursively flattens inner contents to handle nested arrays of any dimension
+	    return flat.concat(Object.prototype.toString.call(item[0]) === '[object Array]' ? flatten(item) : item);
+	  }, []);
+	};
+
 	// Helper functions - Arrays / Buffers
 	var flatten2 = exports.flatten2 = function flatten2(nested2) {
 	  return nested2.reduce(function (chain, item) {
 	    return chain.concat(item);
-	  });
+	  }, []);
 	};
 
 	var flatten2Buffer = exports.flatten2Buffer = function flatten2Buffer(nestedArr, unitLength) {
@@ -1736,6 +1855,384 @@
 
 /***/ },
 /* 6 */
+/*!******************************************!*\
+  !*** ./~/simplex-noise/simplex-noise.js ***!
+  \******************************************/
+/***/ function(module, exports, __webpack_require__) {
+
+	var __WEBPACK_AMD_DEFINE_RESULT__;'use strict';
+
+	/*
+	 * A fast javascript implementation of simplex noise by Jonas Wagner
+	 *
+	 * Based on a speed-improved simplex noise algorithm for 2D, 3D and 4D in Java.
+	 * Which is based on example code by Stefan Gustavson (stegu@itn.liu.se).
+	 * With Optimisations by Peter Eastman (peastman@drizzle.stanford.edu).
+	 * Better rank ordering method by Stefan Gustavson in 2012.
+	 *
+	 *
+	 * Copyright (C) 2012 Jonas Wagner
+	 *
+	 * Permission is hereby granted, free of charge, to any person obtaining
+	 * a copy of this software and associated documentation files (the
+	 * "Software"), to deal in the Software without restriction, including
+	 * without limitation the rights to use, copy, modify, merge, publish,
+	 * distribute, sublicense, and/or sell copies of the Software, and to
+	 * permit persons to whom the Software is furnished to do so, subject to
+	 * the following conditions:
+	 *
+	 * The above copyright notice and this permission notice shall be
+	 * included in all copies or substantial portions of the Software.
+	 *
+	 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+	 * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+	 * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+	 * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+	 * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+	 * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+	 * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+	 *
+	 */
+	(function () {
+	    "use strict";
+
+	    var F2 = 0.5 * (Math.sqrt(3.0) - 1.0),
+	        G2 = (3.0 - Math.sqrt(3.0)) / 6.0,
+	        F3 = 1.0 / 3.0,
+	        G3 = 1.0 / 6.0,
+	        F4 = (Math.sqrt(5.0) - 1.0) / 4.0,
+	        G4 = (5.0 - Math.sqrt(5.0)) / 20.0;
+
+	    function SimplexNoise(random) {
+	        if (!random) random = Math.random;
+	        this.p = new Uint8Array(256);
+	        this.perm = new Uint8Array(512);
+	        this.permMod12 = new Uint8Array(512);
+	        for (var i = 0; i < 256; i++) {
+	            this.p[i] = random() * 256;
+	        }
+	        for (i = 0; i < 512; i++) {
+	            this.perm[i] = this.p[i & 255];
+	            this.permMod12[i] = this.perm[i] % 12;
+	        }
+	    }
+	    SimplexNoise.prototype = {
+	        grad3: new Float32Array([1, 1, 0, -1, 1, 0, 1, -1, 0, -1, -1, 0, 1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, -1, 0, 1, 1, 0, -1, 1, 0, 1, -1, 0, -1, -1]),
+	        grad4: new Float32Array([0, 1, 1, 1, 0, 1, 1, -1, 0, 1, -1, 1, 0, 1, -1, -1, 0, -1, 1, 1, 0, -1, 1, -1, 0, -1, -1, 1, 0, -1, -1, -1, 1, 0, 1, 1, 1, 0, 1, -1, 1, 0, -1, 1, 1, 0, -1, -1, -1, 0, 1, 1, -1, 0, 1, -1, -1, 0, -1, 1, -1, 0, -1, -1, 1, 1, 0, 1, 1, 1, 0, -1, 1, -1, 0, 1, 1, -1, 0, -1, -1, 1, 0, 1, -1, 1, 0, -1, -1, -1, 0, 1, -1, -1, 0, -1, 1, 1, 1, 0, 1, 1, -1, 0, 1, -1, 1, 0, 1, -1, -1, 0, -1, 1, 1, 0, -1, 1, -1, 0, -1, -1, 1, 0, -1, -1, -1, 0]),
+	        noise2D: function noise2D(xin, yin) {
+	            var permMod12 = this.permMod12,
+	                perm = this.perm,
+	                grad3 = this.grad3;
+	            var n0 = 0,
+	                n1 = 0,
+	                n2 = 0; // Noise contributions from the three corners
+	            // Skew the input space to determine which simplex cell we're in
+	            var s = (xin + yin) * F2; // Hairy factor for 2D
+	            var i = Math.floor(xin + s);
+	            var j = Math.floor(yin + s);
+	            var t = (i + j) * G2;
+	            var X0 = i - t; // Unskew the cell origin back to (x,y) space
+	            var Y0 = j - t;
+	            var x0 = xin - X0; // The x,y distances from the cell origin
+	            var y0 = yin - Y0;
+	            // For the 2D case, the simplex shape is an equilateral triangle.
+	            // Determine which simplex we are in.
+	            var i1, j1; // Offsets for second (middle) corner of simplex in (i,j) coords
+	            if (x0 > y0) {
+	                i1 = 1;
+	                j1 = 0;
+	            } // lower triangle, XY order: (0,0)->(1,0)->(1,1)
+	            else {
+	                    i1 = 0;
+	                    j1 = 1;
+	                } // upper triangle, YX order: (0,0)->(0,1)->(1,1)
+	            // A step of (1,0) in (i,j) means a step of (1-c,-c) in (x,y), and
+	            // a step of (0,1) in (i,j) means a step of (-c,1-c) in (x,y), where
+	            // c = (3-sqrt(3))/6
+	            var x1 = x0 - i1 + G2; // Offsets for middle corner in (x,y) unskewed coords
+	            var y1 = y0 - j1 + G2;
+	            var x2 = x0 - 1.0 + 2.0 * G2; // Offsets for last corner in (x,y) unskewed coords
+	            var y2 = y0 - 1.0 + 2.0 * G2;
+	            // Work out the hashed gradient indices of the three simplex corners
+	            var ii = i & 255;
+	            var jj = j & 255;
+	            // Calculate the contribution from the three corners
+	            var t0 = 0.5 - x0 * x0 - y0 * y0;
+	            if (t0 >= 0) {
+	                var gi0 = permMod12[ii + perm[jj]] * 3;
+	                t0 *= t0;
+	                n0 = t0 * t0 * (grad3[gi0] * x0 + grad3[gi0 + 1] * y0); // (x,y) of grad3 used for 2D gradient
+	            }
+	            var t1 = 0.5 - x1 * x1 - y1 * y1;
+	            if (t1 >= 0) {
+	                var gi1 = permMod12[ii + i1 + perm[jj + j1]] * 3;
+	                t1 *= t1;
+	                n1 = t1 * t1 * (grad3[gi1] * x1 + grad3[gi1 + 1] * y1);
+	            }
+	            var t2 = 0.5 - x2 * x2 - y2 * y2;
+	            if (t2 >= 0) {
+	                var gi2 = permMod12[ii + 1 + perm[jj + 1]] * 3;
+	                t2 *= t2;
+	                n2 = t2 * t2 * (grad3[gi2] * x2 + grad3[gi2 + 1] * y2);
+	            }
+	            // Add contributions from each corner to get the final noise value.
+	            // The result is scaled to return values in the interval [-1,1].
+	            return 70.0 * (n0 + n1 + n2);
+	        },
+	        // 3D simplex noise
+	        noise3D: function noise3D(xin, yin, zin) {
+	            var permMod12 = this.permMod12,
+	                perm = this.perm,
+	                grad3 = this.grad3;
+	            var n0, n1, n2, n3; // Noise contributions from the four corners
+	            // Skew the input space to determine which simplex cell we're in
+	            var s = (xin + yin + zin) * F3; // Very nice and simple skew factor for 3D
+	            var i = Math.floor(xin + s);
+	            var j = Math.floor(yin + s);
+	            var k = Math.floor(zin + s);
+	            var t = (i + j + k) * G3;
+	            var X0 = i - t; // Unskew the cell origin back to (x,y,z) space
+	            var Y0 = j - t;
+	            var Z0 = k - t;
+	            var x0 = xin - X0; // The x,y,z distances from the cell origin
+	            var y0 = yin - Y0;
+	            var z0 = zin - Z0;
+	            // For the 3D case, the simplex shape is a slightly irregular tetrahedron.
+	            // Determine which simplex we are in.
+	            var i1, j1, k1; // Offsets for second corner of simplex in (i,j,k) coords
+	            var i2, j2, k2; // Offsets for third corner of simplex in (i,j,k) coords
+	            if (x0 >= y0) {
+	                if (y0 >= z0) {
+	                    i1 = 1;
+	                    j1 = 0;
+	                    k1 = 0;
+	                    i2 = 1;
+	                    j2 = 1;
+	                    k2 = 0;
+	                } // X Y Z order
+	                else if (x0 >= z0) {
+	                        i1 = 1;
+	                        j1 = 0;
+	                        k1 = 0;
+	                        i2 = 1;
+	                        j2 = 0;
+	                        k2 = 1;
+	                    } // X Z Y order
+	                    else {
+	                            i1 = 0;
+	                            j1 = 0;
+	                            k1 = 1;
+	                            i2 = 1;
+	                            j2 = 0;
+	                            k2 = 1;
+	                        } // Z X Y order
+	            } else {
+	                    // x0<y0
+	                    if (y0 < z0) {
+	                        i1 = 0;
+	                        j1 = 0;
+	                        k1 = 1;
+	                        i2 = 0;
+	                        j2 = 1;
+	                        k2 = 1;
+	                    } // Z Y X order
+	                    else if (x0 < z0) {
+	                            i1 = 0;
+	                            j1 = 1;
+	                            k1 = 0;
+	                            i2 = 0;
+	                            j2 = 1;
+	                            k2 = 1;
+	                        } // Y Z X order
+	                        else {
+	                                i1 = 0;
+	                                j1 = 1;
+	                                k1 = 0;
+	                                i2 = 1;
+	                                j2 = 1;
+	                                k2 = 0;
+	                            } // Y X Z order
+	                }
+	            // A step of (1,0,0) in (i,j,k) means a step of (1-c,-c,-c) in (x,y,z),
+	            // a step of (0,1,0) in (i,j,k) means a step of (-c,1-c,-c) in (x,y,z), and
+	            // a step of (0,0,1) in (i,j,k) means a step of (-c,-c,1-c) in (x,y,z), where
+	            // c = 1/6.
+	            var x1 = x0 - i1 + G3; // Offsets for second corner in (x,y,z) coords
+	            var y1 = y0 - j1 + G3;
+	            var z1 = z0 - k1 + G3;
+	            var x2 = x0 - i2 + 2.0 * G3; // Offsets for third corner in (x,y,z) coords
+	            var y2 = y0 - j2 + 2.0 * G3;
+	            var z2 = z0 - k2 + 2.0 * G3;
+	            var x3 = x0 - 1.0 + 3.0 * G3; // Offsets for last corner in (x,y,z) coords
+	            var y3 = y0 - 1.0 + 3.0 * G3;
+	            var z3 = z0 - 1.0 + 3.0 * G3;
+	            // Work out the hashed gradient indices of the four simplex corners
+	            var ii = i & 255;
+	            var jj = j & 255;
+	            var kk = k & 255;
+	            // Calculate the contribution from the four corners
+	            var t0 = 0.6 - x0 * x0 - y0 * y0 - z0 * z0;
+	            if (t0 < 0) n0 = 0.0;else {
+	                var gi0 = permMod12[ii + perm[jj + perm[kk]]] * 3;
+	                t0 *= t0;
+	                n0 = t0 * t0 * (grad3[gi0] * x0 + grad3[gi0 + 1] * y0 + grad3[gi0 + 2] * z0);
+	            }
+	            var t1 = 0.6 - x1 * x1 - y1 * y1 - z1 * z1;
+	            if (t1 < 0) n1 = 0.0;else {
+	                var gi1 = permMod12[ii + i1 + perm[jj + j1 + perm[kk + k1]]] * 3;
+	                t1 *= t1;
+	                n1 = t1 * t1 * (grad3[gi1] * x1 + grad3[gi1 + 1] * y1 + grad3[gi1 + 2] * z1);
+	            }
+	            var t2 = 0.6 - x2 * x2 - y2 * y2 - z2 * z2;
+	            if (t2 < 0) n2 = 0.0;else {
+	                var gi2 = permMod12[ii + i2 + perm[jj + j2 + perm[kk + k2]]] * 3;
+	                t2 *= t2;
+	                n2 = t2 * t2 * (grad3[gi2] * x2 + grad3[gi2 + 1] * y2 + grad3[gi2 + 2] * z2);
+	            }
+	            var t3 = 0.6 - x3 * x3 - y3 * y3 - z3 * z3;
+	            if (t3 < 0) n3 = 0.0;else {
+	                var gi3 = permMod12[ii + 1 + perm[jj + 1 + perm[kk + 1]]] * 3;
+	                t3 *= t3;
+	                n3 = t3 * t3 * (grad3[gi3] * x3 + grad3[gi3 + 1] * y3 + grad3[gi3 + 2] * z3);
+	            }
+	            // Add contributions from each corner to get the final noise value.
+	            // The result is scaled to stay just inside [-1,1]
+	            return 32.0 * (n0 + n1 + n2 + n3);
+	        },
+	        // 4D simplex noise, better simplex rank ordering method 2012-03-09
+	        noise4D: function noise4D(x, y, z, w) {
+	            var permMod12 = this.permMod12,
+	                perm = this.perm,
+	                grad4 = this.grad4;
+
+	            var n0, n1, n2, n3, n4; // Noise contributions from the five corners
+	            // Skew the (x,y,z,w) space to determine which cell of 24 simplices we're in
+	            var s = (x + y + z + w) * F4; // Factor for 4D skewing
+	            var i = Math.floor(x + s);
+	            var j = Math.floor(y + s);
+	            var k = Math.floor(z + s);
+	            var l = Math.floor(w + s);
+	            var t = (i + j + k + l) * G4; // Factor for 4D unskewing
+	            var X0 = i - t; // Unskew the cell origin back to (x,y,z,w) space
+	            var Y0 = j - t;
+	            var Z0 = k - t;
+	            var W0 = l - t;
+	            var x0 = x - X0; // The x,y,z,w distances from the cell origin
+	            var y0 = y - Y0;
+	            var z0 = z - Z0;
+	            var w0 = w - W0;
+	            // For the 4D case, the simplex is a 4D shape I won't even try to describe.
+	            // To find out which of the 24 possible simplices we're in, we need to
+	            // determine the magnitude ordering of x0, y0, z0 and w0.
+	            // Six pair-wise comparisons are performed between each possible pair
+	            // of the four coordinates, and the results are used to rank the numbers.
+	            var rankx = 0;
+	            var ranky = 0;
+	            var rankz = 0;
+	            var rankw = 0;
+	            if (x0 > y0) rankx++;else ranky++;
+	            if (x0 > z0) rankx++;else rankz++;
+	            if (x0 > w0) rankx++;else rankw++;
+	            if (y0 > z0) ranky++;else rankz++;
+	            if (y0 > w0) ranky++;else rankw++;
+	            if (z0 > w0) rankz++;else rankw++;
+	            var i1, j1, k1, l1; // The integer offsets for the second simplex corner
+	            var i2, j2, k2, l2; // The integer offsets for the third simplex corner
+	            var i3, j3, k3, l3; // The integer offsets for the fourth simplex corner
+	            // simplex[c] is a 4-vector with the numbers 0, 1, 2 and 3 in some order.
+	            // Many values of c will never occur, since e.g. x>y>z>w makes x<z, y<w and x<w
+	            // impossible. Only the 24 indices which have non-zero entries make any sense.
+	            // We use a thresholding to set the coordinates in turn from the largest magnitude.
+	            // Rank 3 denotes the largest coordinate.
+	            i1 = rankx >= 3 ? 1 : 0;
+	            j1 = ranky >= 3 ? 1 : 0;
+	            k1 = rankz >= 3 ? 1 : 0;
+	            l1 = rankw >= 3 ? 1 : 0;
+	            // Rank 2 denotes the second largest coordinate.
+	            i2 = rankx >= 2 ? 1 : 0;
+	            j2 = ranky >= 2 ? 1 : 0;
+	            k2 = rankz >= 2 ? 1 : 0;
+	            l2 = rankw >= 2 ? 1 : 0;
+	            // Rank 1 denotes the second smallest coordinate.
+	            i3 = rankx >= 1 ? 1 : 0;
+	            j3 = ranky >= 1 ? 1 : 0;
+	            k3 = rankz >= 1 ? 1 : 0;
+	            l3 = rankw >= 1 ? 1 : 0;
+	            // The fifth corner has all coordinate offsets = 1, so no need to compute that.
+	            var x1 = x0 - i1 + G4; // Offsets for second corner in (x,y,z,w) coords
+	            var y1 = y0 - j1 + G4;
+	            var z1 = z0 - k1 + G4;
+	            var w1 = w0 - l1 + G4;
+	            var x2 = x0 - i2 + 2.0 * G4; // Offsets for third corner in (x,y,z,w) coords
+	            var y2 = y0 - j2 + 2.0 * G4;
+	            var z2 = z0 - k2 + 2.0 * G4;
+	            var w2 = w0 - l2 + 2.0 * G4;
+	            var x3 = x0 - i3 + 3.0 * G4; // Offsets for fourth corner in (x,y,z,w) coords
+	            var y3 = y0 - j3 + 3.0 * G4;
+	            var z3 = z0 - k3 + 3.0 * G4;
+	            var w3 = w0 - l3 + 3.0 * G4;
+	            var x4 = x0 - 1.0 + 4.0 * G4; // Offsets for last corner in (x,y,z,w) coords
+	            var y4 = y0 - 1.0 + 4.0 * G4;
+	            var z4 = z0 - 1.0 + 4.0 * G4;
+	            var w4 = w0 - 1.0 + 4.0 * G4;
+	            // Work out the hashed gradient indices of the five simplex corners
+	            var ii = i & 255;
+	            var jj = j & 255;
+	            var kk = k & 255;
+	            var ll = l & 255;
+	            // Calculate the contribution from the five corners
+	            var t0 = 0.6 - x0 * x0 - y0 * y0 - z0 * z0 - w0 * w0;
+	            if (t0 < 0) n0 = 0.0;else {
+	                var gi0 = perm[ii + perm[jj + perm[kk + perm[ll]]]] % 32 * 4;
+	                t0 *= t0;
+	                n0 = t0 * t0 * (grad4[gi0] * x0 + grad4[gi0 + 1] * y0 + grad4[gi0 + 2] * z0 + grad4[gi0 + 3] * w0);
+	            }
+	            var t1 = 0.6 - x1 * x1 - y1 * y1 - z1 * z1 - w1 * w1;
+	            if (t1 < 0) n1 = 0.0;else {
+	                var gi1 = perm[ii + i1 + perm[jj + j1 + perm[kk + k1 + perm[ll + l1]]]] % 32 * 4;
+	                t1 *= t1;
+	                n1 = t1 * t1 * (grad4[gi1] * x1 + grad4[gi1 + 1] * y1 + grad4[gi1 + 2] * z1 + grad4[gi1 + 3] * w1);
+	            }
+	            var t2 = 0.6 - x2 * x2 - y2 * y2 - z2 * z2 - w2 * w2;
+	            if (t2 < 0) n2 = 0.0;else {
+	                var gi2 = perm[ii + i2 + perm[jj + j2 + perm[kk + k2 + perm[ll + l2]]]] % 32 * 4;
+	                t2 *= t2;
+	                n2 = t2 * t2 * (grad4[gi2] * x2 + grad4[gi2 + 1] * y2 + grad4[gi2 + 2] * z2 + grad4[gi2 + 3] * w2);
+	            }
+	            var t3 = 0.6 - x3 * x3 - y3 * y3 - z3 * z3 - w3 * w3;
+	            if (t3 < 0) n3 = 0.0;else {
+	                var gi3 = perm[ii + i3 + perm[jj + j3 + perm[kk + k3 + perm[ll + l3]]]] % 32 * 4;
+	                t3 *= t3;
+	                n3 = t3 * t3 * (grad4[gi3] * x3 + grad4[gi3 + 1] * y3 + grad4[gi3 + 2] * z3 + grad4[gi3 + 3] * w3);
+	            }
+	            var t4 = 0.6 - x4 * x4 - y4 * y4 - z4 * z4 - w4 * w4;
+	            if (t4 < 0) n4 = 0.0;else {
+	                var gi4 = perm[ii + 1 + perm[jj + 1 + perm[kk + 1 + perm[ll + 1]]]] % 32 * 4;
+	                t4 *= t4;
+	                n4 = t4 * t4 * (grad4[gi4] * x4 + grad4[gi4 + 1] * y4 + grad4[gi4 + 2] * z4 + grad4[gi4 + 3] * w4);
+	            }
+	            // Sum up and scale the result to cover the range [-1,1]
+	            return 27.0 * (n0 + n1 + n2 + n3 + n4);
+	        }
+
+	    };
+
+	    // amd
+	    if (true) !(__WEBPACK_AMD_DEFINE_RESULT__ = function () {
+	        return SimplexNoise;
+	    }.call(exports, __webpack_require__, exports, module), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
+	    //common js
+	    if (true) exports.SimplexNoise = SimplexNoise;
+	    // browser
+	    else if (typeof window !== 'undefined') window.SimplexNoise = SimplexNoise;
+	    // nodejs
+	    if (true) {
+	        module.exports = SimplexNoise;
+	    }
+	})();
+
+/***/ },
+/* 7 */
 /*!**************************!*\
   !*** ./src/icosphere.js ***!
   \**************************/
@@ -1910,7 +2407,7 @@
 	}
 
 /***/ },
-/* 7 */
+/* 8 */
 /*!******************************!*\
   !*** ./~/gl-shader/index.js ***!
   \******************************/
@@ -1918,12 +2415,12 @@
 
 	'use strict';
 
-	var createUniformWrapper = __webpack_require__(/*! ./lib/create-uniforms */ 8);
-	var createAttributeWrapper = __webpack_require__(/*! ./lib/create-attributes */ 11);
-	var makeReflect = __webpack_require__(/*! ./lib/reflect */ 9);
-	var shaderCache = __webpack_require__(/*! ./lib/shader-cache */ 12);
-	var runtime = __webpack_require__(/*! ./lib/runtime-reflect */ 32);
-	var GLError = __webpack_require__(/*! ./lib/GLError */ 10);
+	var createUniformWrapper = __webpack_require__(/*! ./lib/create-uniforms */ 9);
+	var createAttributeWrapper = __webpack_require__(/*! ./lib/create-attributes */ 12);
+	var makeReflect = __webpack_require__(/*! ./lib/reflect */ 10);
+	var shaderCache = __webpack_require__(/*! ./lib/shader-cache */ 13);
+	var runtime = __webpack_require__(/*! ./lib/runtime-reflect */ 33);
+	var GLError = __webpack_require__(/*! ./lib/GLError */ 11);
 
 	//Shader object
 	function Shader(gl) {
@@ -2107,7 +2604,7 @@
 	module.exports = createShader;
 
 /***/ },
-/* 8 */
+/* 9 */
 /*!********************************************!*\
   !*** ./~/gl-shader/lib/create-uniforms.js ***!
   \********************************************/
@@ -2117,8 +2614,8 @@
 
 	var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol ? "symbol" : typeof obj; };
 
-	var coallesceUniforms = __webpack_require__(/*! ./reflect */ 9);
-	var GLError = __webpack_require__(/*! ./GLError */ 10);
+	var coallesceUniforms = __webpack_require__(/*! ./reflect */ 10);
+	var GLError = __webpack_require__(/*! ./GLError */ 11);
 
 	module.exports = createUniformWrapper;
 
@@ -2304,7 +2801,7 @@
 	}
 
 /***/ },
-/* 9 */
+/* 10 */
 /*!************************************!*\
   !*** ./~/gl-shader/lib/reflect.js ***!
   \************************************/
@@ -2369,7 +2866,7 @@
 	}
 
 /***/ },
-/* 10 */
+/* 11 */
 /*!************************************!*\
   !*** ./~/gl-shader/lib/GLError.js ***!
   \************************************/
@@ -2390,7 +2887,7 @@
 	module.exports = GLError;
 
 /***/ },
-/* 11 */
+/* 12 */
 /*!**********************************************!*\
   !*** ./~/gl-shader/lib/create-attributes.js ***!
   \**********************************************/
@@ -2400,7 +2897,7 @@
 
 	module.exports = createAttributeWrapper;
 
-	var GLError = __webpack_require__(/*! ./GLError */ 10);
+	var GLError = __webpack_require__(/*! ./GLError */ 11);
 
 	function ShaderAttribute(gl, wrapper, index, locations, dimension, constFunc) {
 	  this._gl = gl;
@@ -2581,7 +3078,7 @@
 	}
 
 /***/ },
-/* 12 */
+/* 13 */
 /*!*****************************************!*\
   !*** ./~/gl-shader/lib/shader-cache.js ***!
   \*****************************************/
@@ -2592,10 +3089,10 @@
 	exports.shader = getShaderReference;
 	exports.program = createProgram;
 
-	var GLError = __webpack_require__(/*! ./GLError */ 10);
-	var formatCompilerError = __webpack_require__(/*! gl-format-compiler-error */ 13);
+	var GLError = __webpack_require__(/*! ./GLError */ 11);
+	var formatCompilerError = __webpack_require__(/*! gl-format-compiler-error */ 14);
 
-	var weakMap = typeof WeakMap === 'undefined' ? __webpack_require__(/*! weakmap-shim */ 29) : WeakMap;
+	var weakMap = typeof WeakMap === 'undefined' ? __webpack_require__(/*! weakmap-shim */ 30) : WeakMap;
 	var CACHE = new weakMap();
 
 	var SHADER_COUNTER = 0;
@@ -2713,7 +3210,7 @@
 	}
 
 /***/ },
-/* 13 */
+/* 14 */
 /*!*********************************************!*\
   !*** ./~/gl-format-compiler-error/index.js ***!
   \*********************************************/
@@ -2721,10 +3218,10 @@
 
 	'use strict';
 
-	var sprintf = __webpack_require__(/*! sprintf-js */ 14).sprintf;
-	var glConstants = __webpack_require__(/*! gl-constants/lookup */ 15);
-	var shaderName = __webpack_require__(/*! glsl-shader-name */ 17);
-	var addLineNumbers = __webpack_require__(/*! add-line-numbers */ 26);
+	var sprintf = __webpack_require__(/*! sprintf-js */ 15).sprintf;
+	var glConstants = __webpack_require__(/*! gl-constants/lookup */ 16);
+	var shaderName = __webpack_require__(/*! glsl-shader-name */ 18);
+	var addLineNumbers = __webpack_require__(/*! add-line-numbers */ 27);
 
 	module.exports = formatCompilerError;
 
@@ -2774,7 +3271,7 @@
 	}
 
 /***/ },
-/* 14 */
+/* 15 */
 /*!*************************************!*\
   !*** ./~/sprintf-js/src/sprintf.js ***!
   \*************************************/
@@ -3000,7 +3497,7 @@
 	})(typeof window === "undefined" ? undefined : window);
 
 /***/ },
-/* 15 */
+/* 16 */
 /*!**********************************!*\
   !*** ./~/gl-constants/lookup.js ***!
   \**********************************/
@@ -3008,14 +3505,14 @@
 
 	'use strict';
 
-	var gl10 = __webpack_require__(/*! ./1.0/numbers */ 16);
+	var gl10 = __webpack_require__(/*! ./1.0/numbers */ 17);
 
 	module.exports = function lookupConstant(number) {
 	  return gl10[number];
 	};
 
 /***/ },
-/* 16 */
+/* 17 */
 /*!***************************************!*\
   !*** ./~/gl-constants/1.0/numbers.js ***!
   \***************************************/
@@ -3323,7 +3820,7 @@
 	};
 
 /***/ },
-/* 17 */
+/* 18 */
 /*!*************************************!*\
   !*** ./~/glsl-shader-name/index.js ***!
   \*************************************/
@@ -3331,8 +3828,8 @@
 
 	'use strict';
 
-	var tokenize = __webpack_require__(/*! glsl-tokenizer */ 18);
-	var atob = __webpack_require__(/*! atob-lite */ 25);
+	var tokenize = __webpack_require__(/*! glsl-tokenizer */ 19);
+	var atob = __webpack_require__(/*! atob-lite */ 26);
 
 	module.exports = getName;
 
@@ -3354,7 +3851,7 @@
 	}
 
 /***/ },
-/* 18 */
+/* 19 */
 /*!************************************!*\
   !*** ./~/glsl-tokenizer/string.js ***!
   \************************************/
@@ -3362,7 +3859,7 @@
 
 	'use strict';
 
-	var tokenize = __webpack_require__(/*! ./index */ 19);
+	var tokenize = __webpack_require__(/*! ./index */ 20);
 
 	module.exports = tokenizeString;
 
@@ -3377,7 +3874,7 @@
 	}
 
 /***/ },
-/* 19 */
+/* 20 */
 /*!***********************************!*\
   !*** ./~/glsl-tokenizer/index.js ***!
   \***********************************/
@@ -3387,11 +3884,11 @@
 
 	module.exports = tokenize;
 
-	var literals100 = __webpack_require__(/*! ./lib/literals */ 20),
-	    operators = __webpack_require__(/*! ./lib/operators */ 21),
-	    builtins100 = __webpack_require__(/*! ./lib/builtins */ 22),
-	    literals300es = __webpack_require__(/*! ./lib/literals-300es */ 23),
-	    builtins300es = __webpack_require__(/*! ./lib/builtins-300es */ 24);
+	var literals100 = __webpack_require__(/*! ./lib/literals */ 21),
+	    operators = __webpack_require__(/*! ./lib/operators */ 22),
+	    builtins100 = __webpack_require__(/*! ./lib/builtins */ 23),
+	    literals300es = __webpack_require__(/*! ./lib/literals-300es */ 24),
+	    builtins300es = __webpack_require__(/*! ./lib/builtins-300es */ 25);
 
 	var NORMAL = 999 // <-- never emitted
 	,
@@ -3750,7 +4247,7 @@
 	}
 
 /***/ },
-/* 20 */
+/* 21 */
 /*!******************************************!*\
   !*** ./~/glsl-tokenizer/lib/literals.js ***!
   \******************************************/
@@ -3766,7 +4263,7 @@
 	, 'asm', 'class', 'union', 'enum', 'typedef', 'template', 'this', 'packed', 'goto', 'switch', 'default', 'inline', 'noinline', 'volatile', 'public', 'static', 'extern', 'external', 'interface', 'long', 'short', 'double', 'half', 'fixed', 'unsigned', 'input', 'output', 'hvec2', 'hvec3', 'hvec4', 'dvec2', 'dvec3', 'dvec4', 'fvec2', 'fvec3', 'fvec4', 'sampler2DRect', 'sampler3DRect', 'sampler2DRectShadow', 'sizeof', 'cast', 'namespace', 'using'];
 
 /***/ },
-/* 21 */
+/* 22 */
 /*!*******************************************!*\
   !*** ./~/glsl-tokenizer/lib/operators.js ***!
   \*******************************************/
@@ -3777,7 +4274,7 @@
 	module.exports = ['<<=', '>>=', '++', '--', '<<', '>>', '<=', '>=', '==', '!=', '&&', '||', '+=', '-=', '*=', '/=', '%=', '&=', '^^', '^=', '|=', '(', ')', '[', ']', '.', '!', '~', '*', '/', '%', '+', '-', '<', '>', '&', '^', '|', '?', ':', '=', ',', ';', '{', '}'];
 
 /***/ },
-/* 22 */
+/* 23 */
 /*!******************************************!*\
   !*** ./~/glsl-tokenizer/lib/builtins.js ***!
   \******************************************/
@@ -3790,7 +4287,7 @@
 	'abs', 'acos', 'all', 'any', 'asin', 'atan', 'ceil', 'clamp', 'cos', 'cross', 'dFdx', 'dFdy', 'degrees', 'distance', 'dot', 'equal', 'exp', 'exp2', 'faceforward', 'floor', 'fract', 'gl_BackColor', 'gl_BackLightModelProduct', 'gl_BackLightProduct', 'gl_BackMaterial', 'gl_BackSecondaryColor', 'gl_ClipPlane', 'gl_ClipVertex', 'gl_Color', 'gl_DepthRange', 'gl_DepthRangeParameters', 'gl_EyePlaneQ', 'gl_EyePlaneR', 'gl_EyePlaneS', 'gl_EyePlaneT', 'gl_Fog', 'gl_FogCoord', 'gl_FogFragCoord', 'gl_FogParameters', 'gl_FragColor', 'gl_FragCoord', 'gl_FragData', 'gl_FragDepth', 'gl_FragDepthEXT', 'gl_FrontColor', 'gl_FrontFacing', 'gl_FrontLightModelProduct', 'gl_FrontLightProduct', 'gl_FrontMaterial', 'gl_FrontSecondaryColor', 'gl_LightModel', 'gl_LightModelParameters', 'gl_LightModelProducts', 'gl_LightProducts', 'gl_LightSource', 'gl_LightSourceParameters', 'gl_MaterialParameters', 'gl_MaxClipPlanes', 'gl_MaxCombinedTextureImageUnits', 'gl_MaxDrawBuffers', 'gl_MaxFragmentUniformComponents', 'gl_MaxLights', 'gl_MaxTextureCoords', 'gl_MaxTextureImageUnits', 'gl_MaxTextureUnits', 'gl_MaxVaryingFloats', 'gl_MaxVertexAttribs', 'gl_MaxVertexTextureImageUnits', 'gl_MaxVertexUniformComponents', 'gl_ModelViewMatrix', 'gl_ModelViewMatrixInverse', 'gl_ModelViewMatrixInverseTranspose', 'gl_ModelViewMatrixTranspose', 'gl_ModelViewProjectionMatrix', 'gl_ModelViewProjectionMatrixInverse', 'gl_ModelViewProjectionMatrixInverseTranspose', 'gl_ModelViewProjectionMatrixTranspose', 'gl_MultiTexCoord0', 'gl_MultiTexCoord1', 'gl_MultiTexCoord2', 'gl_MultiTexCoord3', 'gl_MultiTexCoord4', 'gl_MultiTexCoord5', 'gl_MultiTexCoord6', 'gl_MultiTexCoord7', 'gl_Normal', 'gl_NormalMatrix', 'gl_NormalScale', 'gl_ObjectPlaneQ', 'gl_ObjectPlaneR', 'gl_ObjectPlaneS', 'gl_ObjectPlaneT', 'gl_Point', 'gl_PointCoord', 'gl_PointParameters', 'gl_PointSize', 'gl_Position', 'gl_ProjectionMatrix', 'gl_ProjectionMatrixInverse', 'gl_ProjectionMatrixInverseTranspose', 'gl_ProjectionMatrixTranspose', 'gl_SecondaryColor', 'gl_TexCoord', 'gl_TextureEnvColor', 'gl_TextureMatrix', 'gl_TextureMatrixInverse', 'gl_TextureMatrixInverseTranspose', 'gl_TextureMatrixTranspose', 'gl_Vertex', 'greaterThan', 'greaterThanEqual', 'inversesqrt', 'length', 'lessThan', 'lessThanEqual', 'log', 'log2', 'matrixCompMult', 'max', 'min', 'mix', 'mod', 'normalize', 'not', 'notEqual', 'pow', 'radians', 'reflect', 'refract', 'sign', 'sin', 'smoothstep', 'sqrt', 'step', 'tan', 'texture2D', 'texture2DLod', 'texture2DProj', 'texture2DProjLod', 'textureCube', 'textureCubeLod', 'texture2DLodEXT', 'texture2DProjLodEXT', 'textureCubeLodEXT', 'texture2DGradEXT', 'texture2DProjGradEXT', 'textureCubeGradEXT'];
 
 /***/ },
-/* 23 */
+/* 24 */
 /*!************************************************!*\
   !*** ./~/glsl-tokenizer/lib/literals-300es.js ***!
   \************************************************/
@@ -3798,12 +4295,12 @@
 
 	'use strict';
 
-	var v100 = __webpack_require__(/*! ./literals */ 20);
+	var v100 = __webpack_require__(/*! ./literals */ 21);
 
 	module.exports = v100.slice().concat(['layout', 'centroid', 'smooth', 'case', 'mat2x2', 'mat2x3', 'mat2x4', 'mat3x2', 'mat3x3', 'mat3x4', 'mat4x2', 'mat4x3', 'mat4x4', 'uint', 'uvec2', 'uvec3', 'uvec4', 'samplerCubeShadow', 'sampler2DArray', 'sampler2DArrayShadow', 'isampler2D', 'isampler3D', 'isamplerCube', 'isampler2DArray', 'usampler2D', 'usampler3D', 'usamplerCube', 'usampler2DArray', 'coherent', 'restrict', 'readonly', 'writeonly', 'resource', 'atomic_uint', 'noperspective', 'patch', 'sample', 'subroutine', 'common', 'partition', 'active', 'filter', 'image1D', 'image2D', 'image3D', 'imageCube', 'iimage1D', 'iimage2D', 'iimage3D', 'iimageCube', 'uimage1D', 'uimage2D', 'uimage3D', 'uimageCube', 'image1DArray', 'image2DArray', 'iimage1DArray', 'iimage2DArray', 'uimage1DArray', 'uimage2DArray', 'image1DShadow', 'image2DShadow', 'image1DArrayShadow', 'image2DArrayShadow', 'imageBuffer', 'iimageBuffer', 'uimageBuffer', 'sampler1DArray', 'sampler1DArrayShadow', 'isampler1D', 'isampler1DArray', 'usampler1D', 'usampler1DArray', 'isampler2DRect', 'usampler2DRect', 'samplerBuffer', 'isamplerBuffer', 'usamplerBuffer', 'sampler2DMS', 'isampler2DMS', 'usampler2DMS', 'sampler2DMSArray', 'isampler2DMSArray', 'usampler2DMSArray']);
 
 /***/ },
-/* 24 */
+/* 25 */
 /*!************************************************!*\
   !*** ./~/glsl-tokenizer/lib/builtins-300es.js ***!
   \************************************************/
@@ -3812,7 +4309,7 @@
 	'use strict';
 
 	// 300es builtins/reserved words that were previously valid in v100
-	var v100 = __webpack_require__(/*! ./builtins */ 22);
+	var v100 = __webpack_require__(/*! ./builtins */ 23);
 
 	// The texture2D|Cube functions have been removed
 	// And the gl_ features are updated
@@ -3828,7 +4325,7 @@
 	, 'trunc', 'round', 'roundEven', 'isnan', 'isinf', 'floatBitsToInt', 'floatBitsToUint', 'intBitsToFloat', 'uintBitsToFloat', 'packSnorm2x16', 'unpackSnorm2x16', 'packUnorm2x16', 'unpackUnorm2x16', 'packHalf2x16', 'unpackHalf2x16', 'outerProduct', 'transpose', 'determinant', 'inverse', 'texture', 'textureSize', 'textureProj', 'textureLod', 'textureOffset', 'texelFetch', 'texelFetchOffset', 'textureProjOffset', 'textureLodOffset', 'textureProjLod', 'textureProjLodOffset', 'textureGrad', 'textureGradOffset', 'textureProjGrad', 'textureProjGradOffset']);
 
 /***/ },
-/* 25 */
+/* 26 */
 /*!*************************************!*\
   !*** ./~/atob-lite/atob-browser.js ***!
   \*************************************/
@@ -3841,7 +4338,7 @@
 	};
 
 /***/ },
-/* 26 */
+/* 27 */
 /*!*************************************!*\
   !*** ./~/add-line-numbers/index.js ***!
   \*************************************/
@@ -3849,7 +4346,7 @@
 
 	'use strict';
 
-	var padLeft = __webpack_require__(/*! pad-left */ 27);
+	var padLeft = __webpack_require__(/*! pad-left */ 28);
 
 	module.exports = addLineNumbers;
 	function addLineNumbers(string, start, delim) {
@@ -3867,7 +4364,7 @@
 	}
 
 /***/ },
-/* 27 */
+/* 28 */
 /*!*****************************!*\
   !*** ./~/pad-left/index.js ***!
   \*****************************/
@@ -3882,7 +4379,7 @@
 
 	'use strict';
 
-	var repeat = __webpack_require__(/*! repeat-string */ 28);
+	var repeat = __webpack_require__(/*! repeat-string */ 29);
 
 	module.exports = function padLeft(str, num, ch) {
 	  ch = typeof ch !== 'undefined' ? ch + '' : ' ';
@@ -3890,7 +4387,7 @@
 	};
 
 /***/ },
-/* 28 */
+/* 29 */
 /*!**********************************!*\
   !*** ./~/repeat-string/index.js ***!
   \**********************************/
@@ -3965,7 +4462,7 @@
 	}
 
 /***/ },
-/* 29 */
+/* 30 */
 /*!*********************************!*\
   !*** ./~/weakmap-shim/index.js ***!
   \*********************************/
@@ -3977,7 +4474,7 @@
 	// https://gist.github.com/Gozala/1269991
 	// This is a reimplemented version (with a few bug fixes).
 
-	var createStore = __webpack_require__(/*! ./create-store.js */ 30);
+	var createStore = __webpack_require__(/*! ./create-store.js */ 31);
 
 	module.exports = weakMap;
 
@@ -4002,7 +4499,7 @@
 	}
 
 /***/ },
-/* 30 */
+/* 31 */
 /*!****************************************!*\
   !*** ./~/weakmap-shim/create-store.js ***!
   \****************************************/
@@ -4012,7 +4509,7 @@
 
 	var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol ? "symbol" : typeof obj; };
 
-	var hiddenStore = __webpack_require__(/*! ./hidden-store.js */ 31);
+	var hiddenStore = __webpack_require__(/*! ./hidden-store.js */ 32);
 
 	module.exports = createStore;
 
@@ -4030,7 +4527,7 @@
 	}
 
 /***/ },
-/* 31 */
+/* 32 */
 /*!****************************************!*\
   !*** ./~/weakmap-shim/hidden-store.js ***!
   \****************************************/
@@ -4055,7 +4552,7 @@
 	}
 
 /***/ },
-/* 32 */
+/* 33 */
 /*!********************************************!*\
   !*** ./~/gl-shader/lib/runtime-reflect.js ***!
   \********************************************/
@@ -4141,7 +4638,7 @@
 	}
 
 /***/ },
-/* 33 */
+/* 34 */
 /*!*******************************!*\
   !*** ./~/gl-buffer/buffer.js ***!
   \*******************************/
@@ -4151,9 +4648,9 @@
 
 	var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol ? "symbol" : typeof obj; };
 
-	var pool = __webpack_require__(/*! typedarray-pool */ 34);
-	var ops = __webpack_require__(/*! ndarray-ops */ 41);
-	var ndarray = __webpack_require__(/*! ndarray */ 46);
+	var pool = __webpack_require__(/*! typedarray-pool */ 35);
+	var ops = __webpack_require__(/*! ndarray-ops */ 42);
+	var ndarray = __webpack_require__(/*! ndarray */ 47);
 
 	var SUPPORTED_TYPES = ["uint8", "uint8_clamped", "uint16", "uint32", "int8", "int16", "int32", "float32"];
 
@@ -4300,7 +4797,7 @@
 	module.exports = createBuffer;
 
 /***/ },
-/* 34 */
+/* 35 */
 /*!***********************************!*\
   !*** ./~/typedarray-pool/pool.js ***!
   \***********************************/
@@ -4308,8 +4805,8 @@
 
 	/* WEBPACK VAR INJECTION */(function(global, Buffer) {'use strict';
 
-	var bits = __webpack_require__(/*! bit-twiddle */ 39);
-	var dup = __webpack_require__(/*! dup */ 40);
+	var bits = __webpack_require__(/*! bit-twiddle */ 40);
+	var dup = __webpack_require__(/*! dup */ 41);
 
 	//Legacy pool support
 	if (!global.__TYPEDARRAY_POOL) {
@@ -4509,10 +5006,10 @@
 	    BUFFER[i].length = 0;
 	  }
 	};
-	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(/*! ./~/buffer/index.js */ 35).Buffer))
+	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(/*! ./~/buffer/index.js */ 36).Buffer))
 
 /***/ },
-/* 35 */
+/* 36 */
 /*!***************************!*\
   !*** ./~/buffer/index.js ***!
   \***************************/
@@ -4528,9 +5025,9 @@
 
 	'use strict';
 
-	var base64 = __webpack_require__(/*! base64-js */ 36);
-	var ieee754 = __webpack_require__(/*! ieee754 */ 37);
-	var isArray = __webpack_require__(/*! isarray */ 38);
+	var base64 = __webpack_require__(/*! base64-js */ 37);
+	var ieee754 = __webpack_require__(/*! ieee754 */ 38);
+	var isArray = __webpack_require__(/*! isarray */ 39);
 
 	exports.Buffer = Buffer;
 	exports.SlowBuffer = SlowBuffer;
@@ -6031,10 +6528,10 @@
 	  }
 	  return i;
 	}
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(/*! ./~/buffer/index.js */ 35).Buffer, (function() { return this; }())))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(/*! ./~/buffer/index.js */ 36).Buffer, (function() { return this; }())))
 
 /***/ },
-/* 36 */
+/* 37 */
 /*!********************************!*\
   !*** ./~/base64-js/lib/b64.js ***!
   \********************************/
@@ -6160,7 +6657,7 @@
 	})( false ? undefined.base64js = {} : exports);
 
 /***/ },
-/* 37 */
+/* 38 */
 /*!****************************!*\
   !*** ./~/ieee754/index.js ***!
   \****************************/
@@ -6254,7 +6751,7 @@
 	};
 
 /***/ },
-/* 38 */
+/* 39 */
 /*!****************************!*\
   !*** ./~/isarray/index.js ***!
   \****************************/
@@ -6269,7 +6766,7 @@
 	};
 
 /***/ },
-/* 39 */
+/* 40 */
 /*!**********************************!*\
   !*** ./~/bit-twiddle/twiddle.js ***!
   \**********************************/
@@ -6477,7 +6974,7 @@
 	};
 
 /***/ },
-/* 40 */
+/* 41 */
 /*!**********************!*\
   !*** ./~/dup/dup.js ***!
   \**********************/
@@ -6537,7 +7034,7 @@
 	module.exports = dupe;
 
 /***/ },
-/* 41 */
+/* 42 */
 /*!**************************************!*\
   !*** ./~/ndarray-ops/ndarray-ops.js ***!
   \**************************************/
@@ -6545,7 +7042,7 @@
 
 	"use strict";
 
-	var compile = __webpack_require__(/*! cwise-compiler */ 42);
+	var compile = __webpack_require__(/*! cwise-compiler */ 43);
 
 	var EmptyProc = {
 	  body: "",
@@ -6953,7 +7450,7 @@
 	});
 
 /***/ },
-/* 42 */
+/* 43 */
 /*!**************************************!*\
   !*** ./~/cwise-compiler/compiler.js ***!
   \**************************************/
@@ -6963,7 +7460,7 @@
 
 	var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol ? "symbol" : typeof obj; };
 
-	var createThunk = __webpack_require__(/*! ./lib/thunk.js */ 43);
+	var createThunk = __webpack_require__(/*! ./lib/thunk.js */ 44);
 
 	function Procedure() {
 	  this.argTypes = [];
@@ -7072,7 +7569,7 @@
 	module.exports = compileCwise;
 
 /***/ },
-/* 43 */
+/* 44 */
 /*!***************************************!*\
   !*** ./~/cwise-compiler/lib/thunk.js ***!
   \***************************************/
@@ -7103,7 +7600,7 @@
 	//   return thunk(compile.bind1(proc))
 	// }
 
-	var compile = __webpack_require__(/*! ./compile.js */ 44);
+	var compile = __webpack_require__(/*! ./compile.js */ 45);
 
 	function createThunk(proc) {
 	  var code = ["'use strict'", "var CACHED={}"];
@@ -7165,7 +7662,7 @@
 	module.exports = createThunk;
 
 /***/ },
-/* 44 */
+/* 45 */
 /*!*****************************************!*\
   !*** ./~/cwise-compiler/lib/compile.js ***!
   \*****************************************/
@@ -7173,7 +7670,7 @@
 
 	"use strict";
 
-	var uniq = __webpack_require__(/*! uniq */ 45);
+	var uniq = __webpack_require__(/*! uniq */ 46);
 
 	// This function generates very simple loops analogous to how you typically traverse arrays (the outermost loop corresponds to the slowest changing index, the innermost loop to the fastest changing index)
 	// TODO: If two arrays have the same strides (and offsets) there is potential for decreasing the number of "pointers" and related variables. The drawback is that the type signature would become more specific and that there would thus be less potential for caching, but it might still be worth it, especially when dealing with large numbers of arguments.
@@ -7542,7 +8039,7 @@
 	module.exports = generateCWiseOp;
 
 /***/ },
-/* 45 */
+/* 46 */
 /*!************************!*\
   !*** ./~/uniq/uniq.js ***!
   \************************/
@@ -7609,7 +8106,7 @@
 	module.exports = unique;
 
 /***/ },
-/* 46 */
+/* 47 */
 /*!******************************!*\
   !*** ./~/ndarray/ndarray.js ***!
   \******************************/
@@ -7617,8 +8114,8 @@
 
 	"use strict";
 
-	var iota = __webpack_require__(/*! iota-array */ 47);
-	var isBuffer = __webpack_require__(/*! is-buffer */ 48);
+	var iota = __webpack_require__(/*! iota-array */ 48);
+	var isBuffer = __webpack_require__(/*! is-buffer */ 49);
 
 	var hasTypedArrays = typeof Float64Array !== "undefined";
 
@@ -7942,7 +8439,7 @@
 	module.exports = wrappedNDArrayCtor;
 
 /***/ },
-/* 47 */
+/* 48 */
 /*!******************************!*\
   !*** ./~/iota-array/iota.js ***!
   \******************************/
@@ -7961,7 +8458,7 @@
 	module.exports = iota;
 
 /***/ },
-/* 48 */
+/* 49 */
 /*!******************************!*\
   !*** ./~/is-buffer/index.js ***!
   \******************************/
